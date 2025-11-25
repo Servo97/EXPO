@@ -66,12 +66,13 @@ class SACLearner(Agent):
         backup_entropy: bool = True,
         use_pnorm: bool = False,
         use_critic_resnet: bool = False,
+        horizon: int = 1,
     ):
         """
         An implementation of the version of Soft-Actor-Critic described in https://arxiv.org/abs/1812.05905
         """
 
-        action_dim = action_space.shape[-1]
+        action_dim = action_space.shape[-1] * horizon
 
         if isinstance(action_space, gym.Space):
             observations = observation_space.sample()

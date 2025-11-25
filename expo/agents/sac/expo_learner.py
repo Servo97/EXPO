@@ -119,9 +119,10 @@ class EXPOLearner(Agent):
         actor_num_blocks: int = 3,
         ddpm_temperature: float = 1.0,
         beta_schedule: str = 'vp',
+        horizon: int = 1,
     ):
 
-        action_dim = action_space.shape[-1]
+        action_dim = action_space.shape[-1] * horizon
 
         if isinstance(action_space, gym.Space):
             observations = observation_space.sample()
@@ -167,6 +168,8 @@ class EXPOLearner(Agent):
         time = jnp.zeros((1, 1))
         observations = jnp.expand_dims(observations, axis = 0)
         actions = jnp.expand_dims(actions, axis = 0)
+        if horizon > 1:
+            actions = jnp.repeat(actions, horizon, axis=-1)
         actor_params = actor_def.init(actor_key, observations, actions,
                                         time)['params']
 

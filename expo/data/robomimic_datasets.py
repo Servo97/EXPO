@@ -326,6 +326,139 @@ class Dataset(object):
         self.rng, sample = self._sample_jax(self.rng)
         return sample
 
+    def sample_sequence(self, batch_size, sequence_length, discount, ret_next_act=False, ret_mc=False, filter_fn=None, success_only=None, by_score=False):
+        """Sample a batch of sequences from the dataset.
+
+        Args:
+            batch_size: Number of sequences to sample.
+            sequence_length: Length of each sequence.
+            discount: Discount factor for rewards.
+            ret_next_act: Whether to return next actions.
+            ret_mc: Whether to return Monte Carlo returns.
+            filter_fn: Function to filter valid start indices.
+            success_only: If True, only sample from successful trajectories.
+            by_score: If True, sample trajectories by score.
+
+        Returns:
+            A dictionary containing sampled sequences.
+        """
+        # 1) Sample start indices
+        valid_indices = np.arange(self.dataset_len - sequence_length + 1)
+
+        # Filter indices that cross episode boundaries
+        # We can detect this by checking if 'dones' or 'terminals' are present in the sequence
+        # Or simpler: check if the sequence contains any done=1 except possibly the last step
+        # But here we have 'dones' in dataset_dict.
+        
+        # A more robust way is to use the trajectory boundaries if available, or check dones.
+        # In this dataset, 'dones' marks the end of an episode.
+        # If dataset_dict['dones'][i] is true, then i is the last step of an episode.
+        # So a sequence starting at i cannot go beyond i.
+        # So for a start index s, we need sum(dones[s : s + sequence_length - 1]) == 0
+        
+        # Let's pre-compute valid indices to avoid doing this every time if possible, 
+        # but for now let's do it on the fly or filter.
+        
+        # Actually, the reference implementation assumes we can sample any index and then mask?
+        # No, the reference implementation in datasets.py (which I copied to expo/data/dataset.py) 
+        # did some filtering.
+        
+        # Let's look at what I added to expo/data/dataset.py.
+        # I used self.size there. Here it is self.dataset_len.
+        
+        # Let's implement a simple validity check based on dones.
+        dones = self.dataset_dict['dones']
+        # We want to avoid sequences that cross episode boundaries.
+        # If we have [0, 0, 1, 0, 0], and seq_len=3.
+        # Start 0: [0, 0, 1] -> OK (ends at 1)
+        # Start 1: [0, 1, 0] -> Bad (crosses boundary)
+        # Start 2: [1, 0, 0] -> Bad (starts at end) - actually maybe OK if it's the start of next? 
+        # No, usually data is concatenated.
+        
+        # To be safe, let's just sample random indices and accept them if they are valid.
+        
+        sampled_indices = []
+        while len(sampled_indices) < batch_size:
+            remaining = batch_size - len(sampled_indices)
+            candidates = self.np_random.randint(0, self.dataset_len - sequence_length + 1, size=remaining * 2)
+            
+            # Check validity
+            # We can vectorize this check
+            # For each candidate s, we check dones[s : s + sequence_length - 1]
+            # If any is 1, it's invalid.
+            
+            # Construct a matrix of indices
+            # shape: (N, seq_len - 1)
+            offsets = np.arange(sequence_length - 1)
+            check_indices = candidates[:, None] + offsets[None, :]
+            # Check dones
+            # Note: dones might be float
+            is_done = dones[check_indices] > 0.5
+            valid_mask = ~np.any(is_done, axis=1)
+            
+            valid_candidates = candidates[valid_mask]
+            sampled_indices.extend(valid_candidates[:remaining])
+            
+        indx = np.array(sampled_indices[:batch_size])
+
+        # 2) Build a (B, T) index matrix and gather everything at once
+        T = sequence_length
+        offs = np.arange(T, dtype=np.int64)[None, :]          # (1, T)
+        seq_idxs = indx[:, None].astype(np.int64) + offs      # (B, T)
+
+        # Helper to get data
+        def get_data(key):
+            if key in self.dataset_dict:
+                return self.dataset_dict[key][seq_idxs]
+            return None
+
+        obs_seq         = get_data('observations')      # (B, T, obs_dim)
+        next_obs_seq    = get_data('next_observations') # (B, T, obs_dim)
+        actions_seq     = get_data('actions')           # (B, T, act_dim)
+        rewards_seq     = get_data('rewards')           # (B, T)
+        masks_seq       = get_data('masks')             # (B, T)
+        
+        # Dones might be useful to have, but RoboReplayBuffer doesn't return it.
+        # However, terminals_seq is derived from masks.
+        # If masks are 1.0 - terminals, then terminals = 1.0 - masks.
+        if masks_seq is not None:
+            terminals_seq = 1.0 - masks_seq
+        else:
+            # Fallback if masks not present?
+            terminals_seq = get_data('dones')
+            if terminals_seq is None:
+                 terminals_seq = np.zeros_like(rewards_seq)
+            masks_seq = 1.0 - terminals_seq
+
+        # 3) Running mask/terminal over time
+        masks_prefix     = np.minimum.accumulate(masks_seq, axis=1)
+        terminals_prefix = np.maximum.accumulate(terminals_seq, axis=1)
+
+        # 4) Valid: 1 at i==0; for i>0 it's 1 - terminals_prefix at i-1
+        valid = np.ones_like(masks_seq, dtype=np.float32)
+        valid[:, 1:] = 1.0 - terminals_prefix[:, :-1]
+
+        # 5) Prefix discounted return
+        rdtype = rewards_seq.dtype
+        disc_pows = (discount ** np.arange(T)).astype(rdtype, copy=False)  # (T,)
+        rewards_prefix = np.cumsum(rewards_seq * disc_pows[None, :], axis=1)
+
+        # 6) "observations" = first frame only
+        first_obs = self.dataset_dict['observations'][indx]  # (B, obs_dim)
+        last_obs = next_obs_seq[:, -1, ...]
+
+        result = dict(
+            observations=first_obs.copy(),
+            actions=actions_seq,
+            masks=masks_prefix,
+            rewards=rewards_prefix,
+            terminals=terminals_prefix,
+            valid=valid,
+            next_observations=last_obs,
+        )
+        
+        return frozen_dict.freeze(result)
+
 
     def split(self, ratio: float) -> Tuple['Dataset', 'Dataset']:
         assert 0 < ratio and ratio < 1

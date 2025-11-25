@@ -3,14 +3,10 @@
 import os
 import pickle
 
-import d4rl
-import d4rl.gym_mujoco
-import d4rl.locomotion
-import dmcgym
-import gym
 import numpy as np
 import tqdm
 from absl import app, flags
+import jax
 
 try:
     from flax.training import checkpoints
@@ -25,7 +21,6 @@ from expo.data import ReplayBuffer
 from expo.data import RoboReplayBuffer
 from expo.data.d4rl_datasets import D4RLDataset
 
-import mimicgen
 from robomimic.utils.dataset import SequenceDataset
 from expo.data.robomimic_datasets import (
     process_robomimic_dataset, get_mimicgen_env, get_robomimic_env, RoboD4RLDataset, 
@@ -76,6 +71,7 @@ flags.DEFINE_boolean(
 flags.DEFINE_boolean(
     "pretrain_q", False, "Whether to pretrain Q-function."
 )
+flags.DEFINE_integer("horizon", 4, "Action chunking horizon.")
 
 config_flags.DEFINE_config_file(
     "config",
@@ -126,22 +122,15 @@ def main(_):
 
     if FLAGS.env_name in ENV_TO_HORIZON_MAP:
 
-        dataset_path = f'./robomimic/datasets/{FLAGS.env_name}/ph/low_dim_v141.hdf5'
+        dataset_path = f'~/.robomimic/{FLAGS.env_name}/{FLAGS.dataset_dir}/low_dim_v141.hdf5'
         if FLAGS.dataset_dir != '' and FLAGS.dataset_dir != 'mh'and FLAGS.dataset_dir != 'ph':
             with open(FLAGS.dataset_dir, 'rb') as handle:
                 dataset = pickle.load(handle)
             
             dataset['rewards'] = dataset['rewards'].squeeze()
             dataset['terminals'] = dataset['terminals'].squeeze()
-        elif FLAGS.dataset_dir == 'ph':
-            seq_dataset = SequenceDataset(hdf5_path=f'./robomimic/datasets/{FLAGS.env_name}/ph/low_dim_v141.hdf5',
-                                        obs_keys=OBS_KEYS,
-                                        dataset_keys=("actions", "rewards", "dones"),
-                                        hdf5_cache_mode="all",
-                                        load_next_obs=True)
-            dataset = process_robomimic_dataset(seq_dataset)
         else:
-            seq_dataset = SequenceDataset(hdf5_path=f'./robomimic/datasets/{FLAGS.env_name}/mh/low_dim_v141.hdf5',
+            seq_dataset = SequenceDataset(hdf5_path=f'~/.robomimic/{FLAGS.env_name}/{FLAGS.dataset_dir}/low_dim_v141.hdf5',
                                         obs_keys=OBS_KEYS,
                                         dataset_keys=("actions", "rewards", "dones"),
                                         hdf5_cache_mode="all",
@@ -157,28 +146,39 @@ def main(_):
         max_traj_len = ENV_TO_HORIZON_MAP[FLAGS.env_name]
 
     else:
+        if FLAGS.dataset_dir == "":
+            # Use D4RL default
+            import d4rl
+            env = gym.make(FLAGS.env_name)
+            eval_env = gym.make(FLAGS.env_name)
+            dataset = d4rl.qlearning_dataset(env)
+            ds = RoboD4RLDataset(env=env, custom_dataset=dataset, num_data=FLAGS.num_data)
+            example_observation = ds.dataset_dict['observations'][0][np.newaxis]
+            example_action = ds.dataset_dict['actions'][0][np.newaxis]
+            max_traj_len = 1000 # Default for antmaze
+        else:
+            dataset_path = f'./mimicgen/datasets/source/{FLAGS.env_name}.hdf5'
+            dataset_dir = f'./mimicgen/datasets/{FLAGS.env_name}/dataset.pkl'
+            with open(dataset_dir, 'rb') as handle:
+                dataset = pickle.load(handle)
+            
+            dataset['rewards'] = dataset['rewards'].squeeze()
+            dataset['terminals'] = dataset['terminals'].squeeze()
 
-        dataset_path = f'./mimicgen/datasets/source/{FLAGS.env_name}.hdf5'
-        dataset_dir = f'./mimicgen/datasets/{FLAGS.env_name}/dataset.pkl'
-        with open(dataset_dir, 'rb') as handle:
-            dataset = pickle.load(handle)
-        
-        dataset['rewards'] = dataset['rewards'].squeeze()
-        dataset['terminals'] = dataset['terminals'].squeeze()
+
+            ds = RoboD4RLDataset(env=None, custom_dataset=dataset, num_data=FLAGS.num_data)
+            example_observation = ds.dataset_dict['observations'][0][np.newaxis]
+            example_action = ds.dataset_dict['actions'][0][np.newaxis]
 
 
-        ds = RoboD4RLDataset(env=None, custom_dataset=dataset, num_data=FLAGS.num_data)
-        example_observation = ds.dataset_dict['observations'][0][np.newaxis]
-        example_action = ds.dataset_dict['actions'][0][np.newaxis]
-
-
-        env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
-        eval_env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
-        max_traj_len = MIMICGEN_ENV_TO_HORIZON_MAP[FLAGS.env_name]
+            env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
+            eval_env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
+            max_traj_len = MIMICGEN_ENV_TO_HORIZON_MAP[FLAGS.env_name]
 
 
     kwargs = dict(FLAGS.config)
     model_cls = kwargs.pop("model_cls")
+    kwargs["horizon"] = FLAGS.horizon
     agent = globals()[model_cls].create(
         FLAGS.seed, example_observation.squeeze(), example_action.squeeze(), **kwargs
     )
@@ -188,10 +188,13 @@ def main(_):
     )
     replay_buffer.seed(FLAGS.seed)
 
-    for i in tqdm.tqdm(
-        range(0, FLAGS.pretrain_steps), smoothing=0.1, disable=not FLAGS.tqdm
-    ):
-        offline_batch = ds.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+    for i in tqdm.tqdm(range(0, FLAGS.pretrain_steps), smoothing=0.1, disable=not FLAGS.tqdm):
+        if FLAGS.horizon > 1:
+            offline_batch = ds.sample_sequence(FLAGS.batch_size * FLAGS.utd_ratio, sequence_length=FLAGS.horizon, discount=FLAGS.config.discount)
+            offline_batch = jax.tree_map(lambda x: x.reshape((FLAGS.utd_ratio, FLAGS.batch_size) + x.shape[1:]), offline_batch)
+        else:
+            offline_batch = ds.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+        
         batch = {}
         for k, v in offline_batch.items():
             batch[k] = v
@@ -213,13 +216,28 @@ def main(_):
 
     observation, done = env.reset(), False
     log_returns = 0
+    action_queue = []
+    action_dim = example_action.shape[-1]
+
     for i in tqdm.tqdm(
         range(0, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm
     ):
         if i < FLAGS.start_training:
             action = np.random.uniform(-1, 1, size=(example_action.shape[1], ))
         else:
-            action, agent = agent.sample_actions(observation)
+            if len(action_queue) == 0:
+                if FLAGS.horizon > 1:
+                    # Sample chunk of actions
+                    action_chunk, agent = agent.sample_actions(observation)
+                    action_chunk = np.array(action_chunk).reshape(-1, action_dim)
+                    for act in action_chunk:
+                        action_queue.append(act)
+                else:
+                    action, agent = agent.sample_actions(observation)
+                    action_queue.append(action)
+            
+            action = action_queue.pop(0)
+
         next_observation, reward, done, info = env.step(action)
 
         if not done or "TimeLimit.truncated" in info:
@@ -242,20 +260,43 @@ def main(_):
 
         if done:
             observation, done = env.reset(), False
+            action_queue = []
 
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length"}
                 wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
 
         if i >= FLAGS.start_training:
-            online_batch = replay_buffer.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
-            )
-            offline_batch = ds.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
-            )
+            if FLAGS.horizon > 1:
+                online_batch = replay_buffer.sample_sequence(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)),
+                    sequence_length=FLAGS.horizon,
+                    discount=FLAGS.config.discount
+                )
+            else:
+                online_batch = replay_buffer.sample(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
+                )
+            
+            if FLAGS.horizon > 1:
+                offline_batch = ds.sample_sequence(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
+                    sequence_length=FLAGS.horizon,
+                    discount=FLAGS.config.discount
+                )
+            else:
+                offline_batch = ds.sample(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
+                )
 
             batch = combine(offline_batch, online_batch)
+            
+            if FLAGS.horizon > 1:
+                 # Flatten actions: (B, T, D) -> (B, T*D)
+                 batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0], -1)
+                 # Take n-step reward and mask: (B, T) -> (B,)
+                 batch['rewards'] = batch['rewards'][:, -1]
+                 batch['masks'] = batch['masks'][:, -1]
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 

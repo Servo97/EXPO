@@ -5,6 +5,7 @@ import gym
 import gym.spaces
 import jax
 import numpy as np
+from flax.core import frozen_dict
 
 from expo.data.dataset import Dataset, DatasetDict
 
@@ -100,6 +101,79 @@ class RoboReplayBuffer(Dataset):
             
             self._size = self._capacity
             self._insert_index = 0
+
+    def sample_sequence(self, batch_size, sequence_length, discount, ret_next_act=False, ret_mc=False, filter_fn=None, success_only=None, by_score=False):
+        # Determine valid start indices to avoid crossing the insert_index (head of circular buffer)
+        valid_indices = []
+        
+        # Range 1: [0, insert_index - sequence_length]
+        # This is valid if insert_index >= sequence_length
+        # Note: indices are inclusive for start, so we go up to insert_index - sequence_length
+        if self._insert_index >= sequence_length:
+            valid_indices.append(np.arange(self._insert_index - sequence_length + 1))
+            
+        # Range 2: [insert_index, capacity - sequence_length]
+        # Only if buffer is full (size == capacity)
+        # We can sample starting from insert_index up to capacity - sequence_length
+        if self._size == self._capacity:
+            if self._capacity - self._insert_index >= sequence_length:
+                valid_indices.append(np.arange(self._insert_index, self._capacity - sequence_length + 1))
+                
+        if not valid_indices:
+             # Buffer too small
+             raise ValueError("Replay buffer too small for requested sequence length.")
+        
+        valid_indices = np.concatenate(valid_indices)
+        
+        # Sample from valid indices
+        idxs = np.random.choice(valid_indices, size=batch_size)
+        
+        # 2) Build a (B, T) index matrix and gather everything at once
+        T = sequence_length
+        offs = np.arange(T, dtype=np.int64)[None, :]          # (1, T)
+        seq_idxs = idxs[:, None].astype(np.int64) + offs      # (B, T)
+
+        # Helper to get data
+        def get_data(key):
+            if key in self.dataset_dict:
+                return self.dataset_dict[key][seq_idxs]
+            return None
+
+        obs_seq         = get_data('observations')      # (B, T, obs_dim)
+        next_obs_seq    = get_data('next_observations') # (B, T, obs_dim)
+        actions_seq     = get_data('actions')           # (B, T, act_dim)
+        rewards_seq     = get_data('rewards')           # (B, T)
+        masks_seq       = get_data('masks')             # (B, T)
+        terminals_seq   = 1.0 - masks_seq # (B, T)
+
+        # 3) Running mask/terminal over time
+        masks_prefix     = np.minimum.accumulate(masks_seq, axis=1)
+        terminals_prefix = np.maximum.accumulate(terminals_seq, axis=1)
+
+        # 4) Valid: 1 at i==0; for i>0 it's 1 - terminals_prefix at i-1
+        valid = np.ones_like(masks_seq, dtype=np.float32)
+        valid[:, 1:] = 1.0 - terminals_prefix[:, :-1]
+
+        # 5) Prefix discounted return
+        rdtype = rewards_seq.dtype
+        disc_pows = (discount ** np.arange(T)).astype(rdtype, copy=False)  # (T,)
+        rewards_prefix = np.cumsum(rewards_seq * disc_pows[None, :], axis=1)
+
+        # 6) "observations" = first frame only
+        first_obs = self.dataset_dict['observations'][idxs]  # (B, obs_dim)
+        last_obs = next_obs_seq[:, -1, ...]
+
+        result = dict(
+            observations=first_obs.copy(),
+            actions=actions_seq,
+            masks=masks_prefix,
+            rewards=rewards_prefix,
+            terminals=terminals_prefix,
+            valid=valid,
+            next_observations=last_obs,
+        )
+        
+        return frozen_dict.freeze(result)
 
 
     def get_iterator(self, queue_size: int = 2, sample_args: dict = {}):

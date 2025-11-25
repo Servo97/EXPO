@@ -177,12 +177,42 @@ class TrajSamplerProc:
             # Handle observation indexing
             
             # Run trajectory
+            # Run trajectory
+            action_queue = []
             for step in range(self.max_traj_length):
-                # Send observation to main process to get action
-                self.send_queue.put((self.process_id, traj_idx, observation))
-                
-                # Wait for action from main process
-                action = self.recv_queue.get()
+                if len(action_queue) == 0:
+                    # Send observation to main process to get action
+                    self.send_queue.put((self.process_id, traj_idx, observation))
+                    
+                    # Wait for action from main process
+                    action_chunk = self.recv_queue.get()
+                    
+                    # Handle action chunking
+                    # Try to get action dimension from env
+                    if hasattr(env, 'action_space'):
+                         if isinstance(env.action_space, np.ndarray):
+                             act_dim = env.action_space.shape[-1]
+                         elif hasattr(env.action_space, 'shape'):
+                             act_dim = env.action_space.shape[-1]
+                         else:
+                             # Fallback or error?
+                             # Assuming flat action if no shape
+                             act_dim = len(action_chunk) 
+                    else:
+                         # Fallback if no action_space
+                         # If we don't know act_dim, we can't easily reshape if it's flat.
+                         # But usually we know it.
+                         # For now assume it is available as it is a gym wrapper.
+                         act_dim = len(action_chunk)
+
+                    if action_chunk.shape[0] > act_dim:
+                         action_chunk = action_chunk.reshape(-1, act_dim)
+                         for a in action_chunk:
+                             action_queue.append(a)
+                    else:
+                         action_queue.append(action_chunk)
+
+                action = action_queue.pop(0)
                 
                 # Step environment
                 next_observation, reward, done, info = env.step(action)
