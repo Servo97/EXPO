@@ -3,6 +3,10 @@
 import os
 import pickle
 import glob
+import warnings
+
+# Suppress gym deprecation warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='gym')
 
 import d4rl
 import d4rl.gym_mujoco
