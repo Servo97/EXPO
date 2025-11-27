@@ -19,6 +19,7 @@ echo "Running on node: $SLURMD_NODENAME"
 export CUDA_VISIBLE_DEVICES=0
 export MUJOCO_GL=egl
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export PYTHONWARNINGS="ignore::DeprecationWarning"
 
 source ~/miniconda/etc/profile.d/conda.sh && conda activate expo
 cd /home/mananaga/EXPO/
