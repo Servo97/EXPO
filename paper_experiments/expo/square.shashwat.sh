@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=20
 #SBATCH --mem=40G
 #SBATCH --time=48:00:00
-#SBATCH --output=/home/mananaga/logs/%j/.out
-#SBATCH --error=/home/mananaga/logs/%j/.out
+#SBATCH --output=/home/ssaxena2/action_chunk_q_learning/logs/%j/.out
+#SBATCH --error=/home/ssaxena2/action_chunk_q_learning/logs/%j/.out
 mkdir -p logs
 
 echo "Working directory: $(pwd)"
@@ -20,16 +20,23 @@ export CUDA_VISIBLE_DEVICES=0
 export MUJOCO_GL=egl
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
-source ~/miniconda/etc/profile.d/conda.sh && conda activate expo
-cd /home/mananaga/EXPO/
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate expo
+cd /home/ssaxena2/action_chunk_q_learning/EXPO/
 
 export C_INCLUDE_PATH=$CONDA_PREFIX/include:$C_INCLUDE_PATH
 export LIBRARY_PATH=$CONDA_PREFIX/lib:$LIBRARY_PATH
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 XLA_PYTHON_CLIENT_PREALLOCATE=false
 
+# Check if seed argument is provided
+if [ -z "$1" ]; then
+    echo "Error: Seed argument not provided."
+    echo "Usage: $0 <seed>"
+    exit 1
+fi
+
 python train_robo.py --env_name=square \
-                                --seed=3 \
+                                --seed=$1 \
                                 --utd_ratio=20 \
                                 --start_training 5000 \
                                 --max_steps 2000000 \
@@ -41,4 +48,4 @@ python train_robo.py --env_name=square \
                                 --config.n_edit_samples=8 \
                                 --config.edit_action_scale=0.05 \
                                 --project_name=expo \
-                                --dataset_dir=/data/user_data/mananaga/robomimic/square/mh
+                                --dataset_dir=/data/user_data/ssaxena2/robomimic/square/mh

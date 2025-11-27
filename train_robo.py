@@ -2,7 +2,13 @@
 #! /usr/bin/env python
 import os
 import pickle
+import glob
 
+import d4rl
+import d4rl.gym_mujoco
+import d4rl.locomotion
+import dmcgym
+import gym
 import numpy as np
 import tqdm
 from absl import app, flags
@@ -21,6 +27,7 @@ from expo.data import ReplayBuffer
 from expo.data import RoboReplayBuffer
 from expo.data.d4rl_datasets import D4RLDataset
 
+import mimicgen
 from robomimic.utils.dataset import SequenceDataset
 from expo.data.robomimic_datasets import (
     process_robomimic_dataset, get_mimicgen_env, get_robomimic_env, RoboD4RLDataset, 
@@ -39,14 +46,14 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("project_name", "expo", "wandb project name.")
 flags.DEFINE_string("env_name", "halfcheetah-expert-v2", "D4rl dataset name.")
-flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
+flags.DEFINE_float("offline_ratio", 0.0, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_integer("eval_episodes", 100, "Number of episodes used for evaluation.")
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
 flags.DEFINE_integer("eval_interval", 10000, "Eval interval.")
 flags.DEFINE_integer("offline_eval_interval", 50000, "Eval interval.")
 flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
-flags.DEFINE_integer("max_steps", int(1e6), "Number of training steps.")
+flags.DEFINE_integer("max_steps", int(1e6) +1000000, "Number of training steps.")
 flags.DEFINE_integer(
     "start_training", int(1e4), "Number of training steps to start training."
 )
@@ -54,7 +61,8 @@ flags.DEFINE_integer(
     "num_data", 0, "Number of training steps to start training."
 )
 flags.DEFINE_string("dataset_dir", "halfcheetah-expert-v2", "D4rl dataset name.")
-flags.DEFINE_integer("pretrain_steps", 0, "Number of offline updates.")
+flags.DEFINE_string("output_dir", "data/user_data/ssaxena2/expo/logs", "Directory for saving logs and checkpoints.")
+flags.DEFINE_integer("pretrain_steps", 1000000, "Number of offline updates.")
 flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
 flags.DEFINE_boolean("save_video", False, "Save videos during evaluation.")
 flags.DEFINE_boolean("checkpoint_model", False, "Save agent checkpoint on evaluation.")
@@ -79,6 +87,9 @@ config_flags.DEFINE_config_file(
     "File path to the training hyperparameter configuration.",
     lock_config=False,
 )
+
+flags.DEFINE_bool('clip_bc', True, "Clip BC to 50%")
+
 
 
 def combine(one_dict, other_dict):
@@ -109,7 +120,7 @@ def main(_):
     if hasattr(FLAGS.config, "critic_layer_norm") and FLAGS.config.critic_layer_norm:
         exp_prefix += "_LN"
 
-    log_dir = os.path.join(FLAGS.log_dir, exp_prefix)
+    log_dir = os.path.join(FLAGS.output_dir, exp_prefix)
 
     if FLAGS.checkpoint_model:
         chkpt_dir = os.path.join(log_dir, "checkpoints")
@@ -122,15 +133,38 @@ def main(_):
 
     if FLAGS.env_name in ENV_TO_HORIZON_MAP:
 
-        dataset_path = f'~/.robomimic/{FLAGS.env_name}/{FLAGS.dataset_dir}/low_dim_v141.hdf5'
-        if FLAGS.dataset_dir != '' and FLAGS.dataset_dir != 'mh'and FLAGS.dataset_dir != 'ph':
+        # Handle custom dataset directory path
+        if FLAGS.dataset_dir != '' and FLAGS.dataset_dir != 'mh' and FLAGS.dataset_dir != 'ph' and os.path.isdir(FLAGS.dataset_dir):
+            # Custom directory path provided - find hdf5 file
+            hdf5_files = glob.glob(os.path.join(FLAGS.dataset_dir, 'low_dim_*.hdf5'))
+            if not hdf5_files:
+                raise FileNotFoundError(f"No low_dim_*.hdf5 file found in {FLAGS.dataset_dir}")
+            dataset_path = hdf5_files[0]  # Use first matching hdf5 file
+            seq_dataset = SequenceDataset(hdf5_path=dataset_path,
+                                        obs_keys=OBS_KEYS,
+                                        dataset_keys=("actions", "rewards", "dones"),
+                                        hdf5_cache_mode="all",
+                                        load_next_obs=True)
+            dataset = process_robomimic_dataset(seq_dataset)
+        elif FLAGS.dataset_dir != '' and FLAGS.dataset_dir != 'mh' and FLAGS.dataset_dir != 'ph' and os.path.isfile(FLAGS.dataset_dir):
+            # Custom pickle file path provided
             with open(FLAGS.dataset_dir, 'rb') as handle:
                 dataset = pickle.load(handle)
-            
             dataset['rewards'] = dataset['rewards'].squeeze()
             dataset['terminals'] = dataset['terminals'].squeeze()
+            dataset_path = f'./robomimic/datasets/{FLAGS.env_name}/ph/low_dim_v141.hdf5'  # Default for env creation
+        elif FLAGS.dataset_dir == 'ph':
+            dataset_path = f'./robomimic/datasets/{FLAGS.env_name}/ph/low_dim_v141.hdf5'
+            seq_dataset = SequenceDataset(hdf5_path=dataset_path,
+                                        obs_keys=OBS_KEYS,
+                                        dataset_keys=("actions", "rewards", "dones"),
+                                        hdf5_cache_mode="all",
+                                        load_next_obs=True)
+            dataset = process_robomimic_dataset(seq_dataset)
         else:
-            seq_dataset = SequenceDataset(hdf5_path=f'~/.robomimic/{FLAGS.env_name}/{FLAGS.dataset_dir}/low_dim_v141.hdf5',
+            # Default to mh
+            dataset_path = f'./robomimic/datasets/{FLAGS.env_name}/mh/low_dim_v141.hdf5'
+            seq_dataset = SequenceDataset(hdf5_path=dataset_path,
                                         obs_keys=OBS_KEYS,
                                         dataset_keys=("actions", "rewards", "dones"),
                                         hdf5_cache_mode="all",
@@ -146,34 +180,27 @@ def main(_):
         max_traj_len = ENV_TO_HORIZON_MAP[FLAGS.env_name]
 
     else:
-        if FLAGS.dataset_dir == "":
-            # Use D4RL default
-            import d4rl
-            env = gym.make(FLAGS.env_name)
-            eval_env = gym.make(FLAGS.env_name)
-            dataset = d4rl.qlearning_dataset(env)
-            ds = RoboD4RLDataset(env=env, custom_dataset=dataset, num_data=FLAGS.num_data)
-            example_observation = ds.dataset_dict['observations'][0][np.newaxis]
-            example_action = ds.dataset_dict['actions'][0][np.newaxis]
-            max_traj_len = 1000 # Default for antmaze
+
+        dataset_path = f'./mimicgen/datasets/source/{FLAGS.env_name}.hdf5'
+        if FLAGS.dataset_dir != '' and FLAGS.dataset_dir != 'mh' and FLAGS.dataset_dir != 'ph':
+            dataset_dir = FLAGS.dataset_dir
         else:
-            dataset_path = f'./mimicgen/datasets/source/{FLAGS.env_name}.hdf5'
             dataset_dir = f'./mimicgen/datasets/{FLAGS.env_name}/dataset.pkl'
-            with open(dataset_dir, 'rb') as handle:
-                dataset = pickle.load(handle)
-            
-            dataset['rewards'] = dataset['rewards'].squeeze()
-            dataset['terminals'] = dataset['terminals'].squeeze()
+        with open(dataset_dir, 'rb') as handle:
+            dataset = pickle.load(handle)
+        
+        dataset['rewards'] = dataset['rewards'].squeeze()
+        dataset['terminals'] = dataset['terminals'].squeeze()
 
 
-            ds = RoboD4RLDataset(env=None, custom_dataset=dataset, num_data=FLAGS.num_data)
-            example_observation = ds.dataset_dict['observations'][0][np.newaxis]
-            example_action = ds.dataset_dict['actions'][0][np.newaxis]
+        ds = RoboD4RLDataset(env=None, custom_dataset=dataset, num_data=FLAGS.num_data)
+        example_observation = ds.dataset_dict['observations'][0][np.newaxis]
+        example_action = ds.dataset_dict['actions'][0][np.newaxis]
 
 
-            env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
-            eval_env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
-            max_traj_len = MIMICGEN_ENV_TO_HORIZON_MAP[FLAGS.env_name]
+        env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
+        eval_env = get_mimicgen_env(dataset_path, example_action, FLAGS.env_name)
+        max_traj_len = MIMICGEN_ENV_TO_HORIZON_MAP[FLAGS.env_name]
 
 
     kwargs = dict(FLAGS.config)
@@ -201,6 +228,16 @@ def main(_):
             if "antmaze" in FLAGS.env_name and k == "rewards":
                 batch[k] -= 1
 
+        if FLAGS.horizon > 1:
+            # Flatten actions: (utd_ratio, batch_size, horizon, action_dim) -> (utd_ratio * batch_size, horizon * action_dim)
+            batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0] * batch['actions'].shape[1], -1)
+            # Take n-step reward and mask: (utd_ratio, batch_size, horizon) -> (utd_ratio * batch_size,)
+            batch['rewards'] = batch['rewards'][:, :, -1].reshape(-1)
+            batch['masks'] = batch['masks'][:, :, -1].reshape(-1)
+            # Flatten observations and next_observations: (utd_ratio, batch_size, ...) -> (utd_ratio * batch_size, ...)
+            batch['observations'] = batch['observations'].reshape(-1, *batch['observations'].shape[2:])
+            batch['next_observations'] = batch['next_observations'].reshape(-1, *batch['next_observations'].shape[2:])
+
         agent, update_info = agent.update_offline(batch, FLAGS.utd_ratio, FLAGS.pretrain_q, FLAGS.pretrain_edit)
 
         if i % FLAGS.log_interval == 0:
@@ -213,6 +250,21 @@ def main(_):
 
             for k, v in eval_info.items():
                 wandb.log({f"offline-evaluation/{k}": v}, step=i)
+                wandb.log({f"evaluation/{k}": v}, step=i)
+            # wandb.log({}, commit=True)  # Force flush
+            print(eval_info)
+            print(f"Offline evaluation success rate: {eval_info.get('success', 0.0)}")
+            if FLAGS.clip_bc and eval_info.get("success", 0.0) >= 0.45:
+                if FLAGS.checkpoint_model:
+                    try:
+                        checkpoints.save_checkpoint(
+                            chkpt_dir, agent, step=i, keep=20, overwrite=True
+                        )
+                    except Exception as e:
+                        print(f"Could not save model checkpoint during BC clipping: {e}")
+
+                print("breaking due to bc clipping (offline pretraining)")
+                break
 
     observation, done = env.reset(), False
     log_returns = 0
