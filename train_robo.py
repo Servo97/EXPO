@@ -94,7 +94,7 @@ config_flags.DEFINE_config_file(
 
 flags.DEFINE_bool('clip_bc', True, "Clip BC to 50%")
 flags.DEFINE_integer('success_buffer_batch_size', 256, "batch size of the success buffer.")
-flags.DEFINE_bool('use_success_buffer', False, "whether to use the success buffer in the bc loss")
+flags.DEFINE_bool('use_success_buffer', True, "whether to use the success buffer in the bc loss")
 
 
 
@@ -105,13 +105,19 @@ def combine(one_dict, other_dict):
         if isinstance(v, dict):
             combined[k] = combine(v, other_dict[k])
         else:
-            tmp = np.empty(
-                (v.shape[0] + other_dict[k].shape[0], *v.shape[1:]), dtype=v.dtype
-            )
-            tmp[0::2] = v
-            tmp[1::2] = other_dict[k]
-            combined[k] = tmp
-
+            # Handle edge cases where one batch is empty
+            if v.shape[0] == 0:
+                combined[k] = other_dict[k]
+            elif other_dict[k].shape[0] == 0:
+                combined[k] = v
+            else:
+                # Interleave the two batches
+                tmp = np.empty(
+                    (v.shape[0] + other_dict[k].shape[0], *v.shape[1:]), dtype=v.dtype
+                )
+                tmp[0::2] = v
+                tmp[1::2] = other_dict[k]
+                combined[k] = tmp
 
     return combined
 
