@@ -402,12 +402,12 @@ class Dataset(object):
             valid_candidates = candidates[valid_mask]
             sampled_indices.extend(valid_candidates[:remaining])
             
-        indx = np.array(sampled_indices[:batch_size])
+        indx = np.array(sampled_indices[:batch_size], dtype=np.int64)
 
         # 2) Build a (B, T) index matrix and gather everything at once
         T = sequence_length
         offs = np.arange(T, dtype=np.int64)[None, :]          # (1, T)
-        seq_idxs = indx[:, None].astype(np.int64) + offs      # (B, T)
+        seq_idxs = indx[:, None] + offs      # (B, T)
 
         # Helper to get data
         def get_data(key):

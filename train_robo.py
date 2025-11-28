@@ -57,7 +57,7 @@ flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
 flags.DEFINE_integer("eval_interval", 10000, "Eval interval.")
 flags.DEFINE_integer("offline_eval_interval", 10000, "Eval interval.")
 flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
-flags.DEFINE_integer("max_steps", int(1e6) +1000000, "Number of training steps.")
+flags.DEFINE_integer("max_steps", int(3e6), "Number of training steps.")
 flags.DEFINE_integer(
     "start_training", int(1e4), "Number of training steps to start training."
 )
@@ -94,7 +94,7 @@ config_flags.DEFINE_config_file(
 
 flags.DEFINE_bool('clip_bc', True, "Clip BC to 50%")
 flags.DEFINE_integer('success_buffer_batch_size', 256, "batch size of the success buffer.")
-flags.DEFINE_bool('use_success_buffer', True, "whether to use the success buffer in the bc loss")
+flags.DEFINE_bool('use_success_buffer', False, "whether to use the success buffer in the bc loss")
 
 
 
@@ -232,6 +232,7 @@ def main(_):
     )
     replay_buffer.seed(FLAGS.seed)
 
+    actual_pretrain_steps = 0  # Track actual steps completed (in case of early BC clipping)
     for i in tqdm.tqdm(range(0, FLAGS.pretrain_steps), smoothing=0.1, disable=not FLAGS.tqdm):
         if FLAGS.horizon > 1:
             offline_batch = ds.sample_sequence(FLAGS.batch_size * FLAGS.utd_ratio, sequence_length=FLAGS.horizon, discount=FLAGS.config.discount)
@@ -281,7 +282,13 @@ def main(_):
                         print(f"Could not save model checkpoint during BC clipping: {e}")
 
                 print("breaking due to bc clipping (offline pretraining)")
+                actual_pretrain_steps = i + 1  # +1 because loop index starts at 0
                 break
+    else:
+        # Loop completed without break (no BC clipping)
+        actual_pretrain_steps = FLAGS.pretrain_steps
+
+    print(f"Completed {actual_pretrain_steps} pretraining steps", flush=True)
 
     observation, done = env.reset(), False
     log_returns = 0
@@ -356,7 +363,7 @@ def main(_):
 
             for k, v in info["episode"].items():
                 decode = {"r": "return", "l": "length"}
-                wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
+                wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i >= FLAGS.start_training:
             if FLAGS.horizon > 1:
@@ -428,7 +435,7 @@ def main(_):
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
-                    wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
+                    wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i % FLAGS.eval_interval == 0:
 
@@ -442,7 +449,7 @@ def main(_):
 
 
             for k, v in eval_info.items():
-                wandb.log({f"evaluation/{k}": v}, step=i + FLAGS.pretrain_steps)
+                wandb.log({f"evaluation/{k}": v}, step=i + actual_pretrain_steps)
 
             if FLAGS.checkpoint_model:
                 try:
