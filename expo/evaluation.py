@@ -1,4 +1,8 @@
 from typing import Dict
+import warnings
+
+# Suppress deprecation warnings from gym
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 import gym
 import numpy as np
@@ -157,6 +161,8 @@ class TrajSamplerProc:
         self.recv_queue = mp.Queue()
     
     def start(self):
+        # Suppress deprecation warnings in worker process
+        warnings.filterwarnings('ignore', category=DeprecationWarning)
         
         env = copy.deepcopy(self.env)
 

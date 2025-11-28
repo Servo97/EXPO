@@ -380,7 +380,10 @@ class Dataset(object):
         sampled_indices = []
         while len(sampled_indices) < batch_size:
             remaining = batch_size - len(sampled_indices)
-            candidates = self.np_random.randint(0, self.dataset_len - sequence_length + 1, size=remaining * 2)
+            if hasattr(self.np_random, 'integers'):
+                candidates = self.np_random.integers(0, self.dataset_len - sequence_length + 1, size=remaining * 2)
+            else:
+                candidates = self.np_random.randint(0, self.dataset_len - sequence_length + 1, size=remaining * 2)
             
             # Check validity
             # We can vectorize this check

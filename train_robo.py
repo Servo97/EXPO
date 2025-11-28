@@ -55,7 +55,7 @@ flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_integer("eval_episodes", 100, "Number of episodes used for evaluation.")
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
 flags.DEFINE_integer("eval_interval", 10000, "Eval interval.")
-flags.DEFINE_integer("offline_eval_interval", 50000, "Eval interval.")
+flags.DEFINE_integer("offline_eval_interval", 10000, "Eval interval.")
 flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
 flags.DEFINE_integer("max_steps", int(1e6) +1000000, "Number of training steps.")
 flags.DEFINE_integer(
@@ -257,8 +257,8 @@ def main(_):
                 wandb.log({f"evaluation/{k}": v}, step=i)
             # wandb.log({}, commit=True)  # Force flush
             print(eval_info)
-            print(f"Offline evaluation success rate: {eval_info.get('success', 0.0)}")
-            if FLAGS.clip_bc and eval_info.get("success", 0.0) >= 0.45:
+            print(f"Offline evaluation success rate: {eval_info.get('return', 0.0)}")
+            if FLAGS.clip_bc and eval_info.get("return", 0.0) >= 0.45:
                 if FLAGS.checkpoint_model:
                     try:
                         checkpoints.save_checkpoint(
