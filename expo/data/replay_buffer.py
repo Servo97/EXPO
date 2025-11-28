@@ -61,6 +61,8 @@ class RoboReplayBuffer(Dataset):
             rewards=np.empty((capacity,), dtype=np.float32),
             masks=np.empty((capacity,), dtype=np.float32),
             dones=np.empty((capacity,), dtype=bool),
+            is_success=np.zeros((capacity,), dtype=np.float32),
+            score=np.zeros((capacity,), dtype=np.float32),
         )
 
         super().__init__(dataset_dict)
@@ -68,12 +70,21 @@ class RoboReplayBuffer(Dataset):
         self._size = 0
         self._capacity = capacity
         self._insert_index = 0
+        self._traj_success_mask = np.zeros(capacity, dtype=np.bool_)
 
     def __len__(self) -> int:
         return self._size
 
     def insert(self, data_dict: DatasetDict):
+        # Handle is_success and score fields
+        data_dict = data_dict.copy()
+        if 'is_success' not in data_dict:
+            data_dict['is_success'] = 0.0
+        if 'score' not in data_dict:
+            data_dict['score'] = 1.0 if float(data_dict.get('is_success', 0.0)) > 0 else 1e-9
+        
         _insert_recursively(self.dataset_dict, data_dict, self._insert_index)
+        self._traj_success_mask[self._insert_index] = (float(data_dict['is_success']) > 0)
 
         self._insert_index = (self._insert_index + 1) % self._capacity
         self._size = min(self._size + 1, self._capacity)
@@ -124,6 +135,17 @@ class RoboReplayBuffer(Dataset):
              raise ValueError("Replay buffer too small for requested sequence length.")
         
         valid_indices = np.concatenate(valid_indices)
+        
+        # Apply success filter if requested
+        if success_only is not None:
+            success_mask = self._traj_success_mask[valid_indices]
+            if success_only:
+                valid_indices = valid_indices[success_mask]
+            else:
+                valid_indices = valid_indices[~success_mask]
+            
+            if len(valid_indices) == 0:
+                raise ValueError("No transitions found matching success filter")
         
         # Sample from valid indices
         idxs = np.random.choice(valid_indices, size=batch_size)

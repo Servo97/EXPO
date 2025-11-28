@@ -588,6 +588,47 @@ class EXPOLearner(Agent):
     
 
 
+    def update_actor_bc(self, batch: DatasetDict) -> Tuple[Agent, Dict[str, float]]:
+        """Update actor using BC loss on successful trajectories."""
+        rng = self.rng
+        key, rng = jax.random.split(rng, 2)
+        time = jax.random.randint(key, (batch['actions'].shape[0], ), 0, self.T)
+        key, rng = jax.random.split(rng, 2)
+        noise_sample = jax.random.normal(
+            key, (batch['actions'].shape[0], self.action_dim))
+        
+        alpha_hats = self.alpha_hats[time]
+        time = jnp.expand_dims(time, axis=1)
+        alpha_1 = jnp.expand_dims(jnp.sqrt(alpha_hats), axis=1)
+        alpha_2 = jnp.expand_dims(jnp.sqrt(1 - alpha_hats), axis=1)
+        noisy_actions = alpha_1 * batch['actions'] + alpha_2 * noise_sample
+
+        key, rng = jax.random.split(rng, 2)
+
+        def actor_bc_loss_fn(score_model_params) -> Tuple[jnp.ndarray, Dict[str, float]]:
+            eps_pred = self.actor.apply_fn({'params': score_model_params},
+                                       batch['observations'],
+                                       noisy_actions,
+                                       time,
+                                       rngs={'dropout': key},
+                                       training=True)
+            
+            bc_loss = (((eps_pred - noise_sample) ** 2).sum(axis = -1)).mean()
+            return bc_loss, {'bc_loss': bc_loss}
+
+        grads, info = jax.grad(actor_bc_loss_fn, has_aux=True)(self.actor.params)
+        actor = self.actor.apply_gradients(grads=grads)
+
+        agent = self.replace(actor=actor)
+        target_score_params = optax.incremental_update(
+            actor.params, self.target_actor.params, self.actor_tau
+        )
+
+        target_score_model = self.target_actor.replace(params=target_score_params)
+        new_agent = self.replace(actor=actor, target_actor=target_score_model, rng=rng)
+
+        return new_agent, info
+
     @partial(jax.jit, static_argnames="utd_ratio")
     def update(self, batch: DatasetDict, utd_ratio: int):
 
