@@ -48,7 +48,8 @@ from expo.wrappers import wrap_gym
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("project_name", "expo", "wandb project name.")
+flags.DEFINE_string("project_name", "EXPO_paper", "wandb project name.")
+flags.DEFINE_string("run_name", None, "wandb run name. If None, wandb will auto-generate a name.")
 flags.DEFINE_string("env_name", "halfcheetah-expert-v2", "D4rl dataset name.")
 flags.DEFINE_float("offline_ratio", 0.0, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
@@ -136,7 +137,7 @@ def create_success_buffer_batch(replay_buffer, batch_size, seq_len, discount):
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
 
-    wandb.init(project=FLAGS.project_name)
+    wandb.init(project=FLAGS.project_name, name=FLAGS.run_name)
     wandb.config.update(FLAGS)
 
     exp_prefix = f"s{FLAGS.seed}_{FLAGS.pretrain_steps}pretrain"

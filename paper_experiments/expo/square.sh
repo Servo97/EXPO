@@ -30,7 +30,8 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 python train_robo.py --env_name=square \
-                                --seed=3 \
+                                --seed=$1 \
+                                --run_name=expo_square_$1 \
                                 --utd_ratio=20 \
                                 --start_training 5000 \
                                 --max_steps 2000000 \
@@ -41,5 +42,5 @@ python train_robo.py --env_name=square \
                                 --config.N=8 \
                                 --config.n_edit_samples=8 \
                                 --config.edit_action_scale=0.05 \
-                                --project_name=expo \
+                                --project_name=EXPO_paper \
                                 --dataset_dir=/data/user_data/mananaga/robomimic/square/mh
