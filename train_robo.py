@@ -51,7 +51,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("project_name", "EXPO_paper", "wandb project name.")
 flags.DEFINE_string("run_name", None, "wandb run name. If None, wandb will auto-generate a name.")
 flags.DEFINE_string("env_name", "halfcheetah-expert-v2", "D4rl dataset name.")
-flags.DEFINE_float("offline_ratio", 0.0, "Offline ratio.")
+flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_integer("eval_episodes", 100, "Number of episodes used for evaluation.")
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
@@ -95,7 +95,7 @@ config_flags.DEFINE_config_file(
 
 flags.DEFINE_bool('clip_bc', True, "Clip BC to 50%")
 flags.DEFINE_integer('success_buffer_batch_size', 256, "batch size of the success buffer.")
-flags.DEFINE_bool('use_success_buffer', True, "whether to use the success buffer in the bc loss")
+flags.DEFINE_bool('use_success_buffer', False, "whether to use the success buffer in the bc loss")
 
 
 

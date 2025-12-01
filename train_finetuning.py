@@ -2,6 +2,11 @@
 #! /usr/bin/env python
 import os
 import pickle
+import glob
+import warnings
+
+# Suppress all deprecation warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 import d4rl
 import d4rl.gym_mujoco
@@ -11,6 +16,7 @@ import gym
 import numpy as np
 import tqdm
 from absl import app, flags
+import jax
 
 try:
     from flax.training import checkpoints
@@ -33,20 +39,22 @@ from expo.wrappers import wrap_gym
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("project_name", "expo", "wandb project name.")
+flags.DEFINE_string("project_name", "EXPO_paper", "wandb project name.")
+flags.DEFINE_string("run_name", None, "wandb run name. If None, wandb will auto-generate a name.")
 flags.DEFINE_string("env_name", "halfcheetah-expert-v2", "D4rl dataset name.")
 flags.DEFINE_float("offline_ratio", 0.5, "Offline ratio.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_integer("eval_episodes", 100, "Number of episodes used for evaluation.")
 flags.DEFINE_integer("log_interval", 1000, "Logging interval.")
-flags.DEFINE_integer("eval_interval", 5000, "Eval interval.")
-flags.DEFINE_integer("offline_eval_interval", 5000, "Eval interval.")
+flags.DEFINE_integer("eval_interval", 10000, "Eval interval.")
+flags.DEFINE_integer("offline_eval_interval", 10000, "Eval interval.")
 flags.DEFINE_integer("batch_size", 256, "Mini batch size.")
-flags.DEFINE_integer("max_steps", int(1e6), "Number of training steps.")
+flags.DEFINE_integer("max_steps", int(3e6), "Number of training steps.")
 flags.DEFINE_integer(
     "start_training", int(1e4), "Number of training steps to start training."
 )
-flags.DEFINE_integer("pretrain_steps", 0, "Number of offline updates.")
+flags.DEFINE_string("output_dir", "data/user_data/ssaxena2/expo/logs", "Directory for saving logs and checkpoints.")
+flags.DEFINE_integer("pretrain_steps", 1000000, "Number of offline updates.")
 flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
 flags.DEFINE_boolean("save_video", False, "Save videos during evaluation.")
 flags.DEFINE_boolean("checkpoint_model", False, "Save agent checkpoint on evaluation.")
@@ -66,6 +74,7 @@ flags.DEFINE_boolean(
 flags.DEFINE_boolean(
     "pretrain_q", False, "Whether to pretrain Q-function."
 )
+flags.DEFINE_integer("horizon", 4, "Action chunking horizon.")
 
 config_flags.DEFINE_config_file(
     "config",
@@ -73,6 +82,10 @@ config_flags.DEFINE_config_file(
     "File path to the training hyperparameter configuration.",
     lock_config=False,
 )
+
+flags.DEFINE_bool('clip_bc', True, "Clip BC to 50%")
+flags.DEFINE_integer('success_buffer_batch_size', 256, "batch size of the success buffer.")
+flags.DEFINE_bool('use_success_buffer', False, "whether to use the success buffer in the bc loss")
 
 
 
@@ -84,28 +97,45 @@ def combine(one_dict, other_dict):
         if isinstance(v, dict):
             combined[k] = combine(v, other_dict[k])
         else:
-            tmp = np.empty(
-                (v.shape[0] + other_dict[k].shape[0], *v.shape[1:]), dtype=v.dtype
-            )
-            tmp[0::2] = v
-            tmp[1::2] = other_dict[k]
-            combined[k] = tmp
-
+            # Handle edge cases where one batch is empty
+            if v.shape[0] == 0:
+                combined[k] = other_dict[k]
+            elif other_dict[k].shape[0] == 0:
+                combined[k] = v
+            else:
+                # Interleave the two batches
+                tmp = np.empty(
+                    (v.shape[0] + other_dict[k].shape[0], *v.shape[1:]), dtype=v.dtype
+                )
+                tmp[0::2] = v
+                tmp[1::2] = other_dict[k]
+                combined[k] = tmp
 
     return combined
+
+
+def create_success_buffer_batch(replay_buffer, batch_size, seq_len, discount):
+    """Sample a batch from successful trajectories only."""
+    success_batch = replay_buffer.sample_sequence(
+        batch_size=batch_size,
+        sequence_length=seq_len,
+        discount=discount,
+        success_only=True,
+    )
+    return success_batch
 
 
 def main(_):
     assert FLAGS.offline_ratio >= 0.0 and FLAGS.offline_ratio <= 1.0
 
-    wandb.init(project=FLAGS.project_name)
+    wandb.init(project=FLAGS.project_name, name=FLAGS.run_name)
     wandb.config.update(FLAGS)
 
     exp_prefix = f"s{FLAGS.seed}_{FLAGS.pretrain_steps}pretrain"
     if hasattr(FLAGS.config, "critic_layer_norm") and FLAGS.config.critic_layer_norm:
         exp_prefix += "_LN"
 
-    log_dir = os.path.join(FLAGS.log_dir, exp_prefix)
+    log_dir = os.path.join(FLAGS.output_dir, exp_prefix)
 
     if FLAGS.checkpoint_model:
         chkpt_dir = os.path.join(log_dir, "checkpoints")
@@ -131,6 +161,7 @@ def main(_):
 
     kwargs = dict(FLAGS.config)
     model_cls = kwargs.pop("model_cls")
+    kwargs["horizon"] = FLAGS.horizon
     agent = globals()[model_cls].create(
         FLAGS.seed, env.observation_space, env.action_space, **kwargs
     )
@@ -140,15 +171,29 @@ def main(_):
     )
     replay_buffer.seed(FLAGS.seed)
 
-    for i in tqdm.tqdm(
-        range(0, FLAGS.pretrain_steps), smoothing=0.1, disable=not FLAGS.tqdm
-    ):
-        offline_batch = ds.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+    actual_pretrain_steps = 0  # Track actual steps completed (in case of early BC clipping)
+    for i in tqdm.tqdm(range(0, FLAGS.pretrain_steps), smoothing=0.1, disable=not FLAGS.tqdm):
+        if FLAGS.horizon > 1:
+            offline_batch = ds.sample_sequence(FLAGS.batch_size * FLAGS.utd_ratio, sequence_length=FLAGS.horizon, discount=FLAGS.config.discount)
+            offline_batch = jax.tree_map(lambda x: x.reshape((FLAGS.utd_ratio, FLAGS.batch_size) + x.shape[1:]), offline_batch)
+        else:
+            offline_batch = ds.sample(FLAGS.batch_size * FLAGS.utd_ratio)
+        
         batch = {}
         for k, v in offline_batch.items():
             batch[k] = v
             if "antmaze" in FLAGS.env_name and k == "rewards":
                 batch[k] -= 1
+
+        if FLAGS.horizon > 1:
+            # Flatten actions: (utd_ratio, batch_size, horizon, action_dim) -> (utd_ratio * batch_size, horizon * action_dim)
+            batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0] * batch['actions'].shape[1], -1)
+            # Take n-step reward and mask: (utd_ratio, batch_size, horizon) -> (utd_ratio * batch_size,)
+            batch['rewards'] = batch['rewards'][:, :, -1].reshape(-1)
+            batch['masks'] = batch['masks'][:, :, -1].reshape(-1)
+            # Flatten observations and next_observations: (utd_ratio, batch_size, ...) -> (utd_ratio * batch_size, ...)
+            batch['observations'] = batch['observations'].reshape(-1, *batch['observations'].shape[2:])
+            batch['next_observations'] = batch['next_observations'].reshape(-1, *batch['next_observations'].shape[2:])
 
         agent, update_info = agent.update_offline(batch, FLAGS.utd_ratio, FLAGS.pretrain_q, FLAGS.pretrain_edit)
 
@@ -166,9 +211,42 @@ def main(_):
 
             for k, v in eval_info.items():
                 wandb.log({f"offline-evaluation/{k}": v}, step=i)
+                wandb.log({f"evaluation/{k}": v}, step=i)
+            # wandb.log({}, commit=True)  # Force flush
+            print(eval_info)
+            print(f"Offline evaluation success rate: {eval_info.get('return', 0.0)}")
+            if FLAGS.clip_bc and eval_info.get("return", 0.0) >= 0.45:
+                if FLAGS.checkpoint_model:
+                    try:
+                        checkpoints.save_checkpoint(
+                            chkpt_dir, agent, step=i, keep=20, overwrite=True
+                        )
+                    except Exception as e:
+                        print(f"Could not save model checkpoint during BC clipping: {e}")
+
+                print("breaking due to bc clipping (offline pretraining)")
+                actual_pretrain_steps = i + 1  # +1 because loop index starts at 0
+                break
+    else:
+        # Loop completed without break (no BC clipping)
+        actual_pretrain_steps = FLAGS.pretrain_steps
+
+    print(f"Completed {actual_pretrain_steps} pretraining steps", flush=True)
 
     observation, done = env.reset(), False
+    log_returns = 0
+    action_queue = []
+    action_dim = example_action.shape[-1]
+    trajectory_buffer = []
 
+    # Print configuration
+    if FLAGS.use_success_buffer:
+        print("=" * 60, flush=True)
+        print(f"SUCCESS BUFFER ENABLED", flush=True)
+        print(f"  - Success buffer batch size: {FLAGS.success_buffer_batch_size}", flush=True)
+        print(f"  - Horizon: {FLAGS.horizon}", flush=True)
+        print(f"  - Min required successful transitions: {FLAGS.success_buffer_batch_size * FLAGS.horizon}", flush=True)
+        print("=" * 60, flush=True)
 
     for i in tqdm.tqdm(
         range(0, FLAGS.max_steps + 1), smoothing=0.1, disable=not FLAGS.tqdm
@@ -176,7 +254,18 @@ def main(_):
         if i < FLAGS.start_training:
             action = env.action_space.sample()
         else:
-            action, agent = agent.sample_actions(observation)
+            if len(action_queue) == 0:
+                if FLAGS.horizon > 1:
+                    # Sample chunk of actions
+                    action_chunk, agent = agent.sample_actions(observation)
+                    action_chunk = np.array(action_chunk).reshape(-1, action_dim)
+                    for act in action_chunk:
+                        action_queue.append(act)
+                else:
+                    action, agent = agent.sample_actions(observation)
+                    action_queue.append(action)
+            
+            action = action_queue.pop(0)
 
         next_observation, reward, done, info = env.step(action)
 
@@ -185,45 +274,111 @@ def main(_):
         else:
             mask = 0.0
 
-        replay_buffer.insert(
-            dict(
-                observations=observation,
-                actions=action,
-                rewards=reward,
-                masks=mask,
-                dones=done,
-                next_observations=next_observation,
-            )
+        transition = dict(
+            observations=observation,
+            actions=action,
+            rewards=reward,
+            masks=mask,
+            dones=done,
+            next_observations=next_observation,
         )
+        trajectory_buffer.append(transition)
+        log_returns += reward
         observation = next_observation
 
         if done:
+            # Mark all transitions in trajectory with success
+            is_success = float(info.get('success', 0.0))
+            score = is_success if is_success != 0 else 1e-9
+            for traj_transition in trajectory_buffer:
+                traj_transition['is_success'] = is_success
+                traj_transition['score'] = score
+                replay_buffer.insert(traj_transition)
+            
+            # Print success buffer status every successful episode
+            if is_success > 0:
+                num_successful = replay_buffer._traj_success_mask[:replay_buffer._size].sum()
+                print(f"[Step {i}] SUCCESS! Total successful transitions in buffer: {num_successful}/{replay_buffer._size}", flush=True)
+            
+            trajectory_buffer = []
             observation, done = env.reset(), False
+            action_queue = []
 
             for k, v in info["episode"].items():
-                decode = {"r": "return", "l": "length", "t": "time"}
-                wandb.log({f"training/{decode[k]}": v}, step=i + FLAGS.pretrain_steps)
+                decode = {"r": "return", "l": "length"}
+                wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i >= FLAGS.start_training:
-            online_batch = replay_buffer.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
-            )
-            offline_batch = ds.sample(
-                int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
-            )
+            if FLAGS.horizon > 1:
+                online_batch = replay_buffer.sample_sequence(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)),
+                    sequence_length=FLAGS.horizon,
+                    discount=FLAGS.config.discount
+                )
+            else:
+                online_batch = replay_buffer.sample(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
+                )
+            
+            if FLAGS.horizon > 1:
+                offline_batch = ds.sample_sequence(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
+                    sequence_length=FLAGS.horizon,
+                    discount=FLAGS.config.discount
+                )
+            else:
+                offline_batch = ds.sample(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
+                )
 
             batch = combine(offline_batch, online_batch)
-
-
-
-            if "antmaze" in FLAGS.env_name:
-                batch["rewards"] -= 1
+            
+            if FLAGS.horizon > 1:
+                 # Flatten actions: (B, T, D) -> (B, T*D)
+                 batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0], -1)
+                 # Take n-step reward and mask: (B, T) -> (B,)
+                 batch['rewards'] = batch['rewards'][:, -1]
+                 batch['masks'] = batch['masks'][:, -1]
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
+            # Success buffer BC regularization
+            if FLAGS.use_success_buffer and FLAGS.horizon > 1:
+                num_successful = replay_buffer._traj_success_mask[:replay_buffer._size].sum()
+                min_required = FLAGS.success_buffer_batch_size * FLAGS.horizon
+                
+                if i % FLAGS.log_interval == 0:
+                    print(f"[Step {i}] Success buffer check: {num_successful} successful / {min_required} required", flush=True)
+                
+                if num_successful >= min_required:
+                    try:
+                        success_batch = create_success_buffer_batch(
+                            replay_buffer,
+                            FLAGS.success_buffer_batch_size,
+                            FLAGS.horizon,
+                            FLAGS.config.discount
+                        )
+                        # Flatten actions for BC
+                        success_batch_flat = dict(success_batch)
+                        success_batch_flat['actions'] = success_batch['actions'].reshape(
+                            success_batch['actions'].shape[0], -1
+                        )
+                        success_batch_flat['observations'] = success_batch['observations']
+                        
+                        agent, bc_info = agent.update_actor_bc(success_batch_flat)
+                        update_info.update({f"success_bc/{k}": v for k, v in bc_info.items()})
+                        
+                        if i % FLAGS.log_interval == 0:
+                            print(f"[Step {i}] ✓ Applied success buffer BC update, loss: {bc_info.get('bc_loss', 'N/A'):.4f}", flush=True)
+                    except ValueError as e:
+                        # Not enough successful trajectories yet
+                        if i % FLAGS.log_interval == 0:
+                            print(f"[Step {i}] ✗ Failed to sample from success buffer: {e}", flush=True)
+                        pass
+
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
-                    wandb.log({f"training/{k}": v}, step=i + FLAGS.pretrain_steps)
+                    wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i % FLAGS.eval_interval == 0:
             if not FLAGS.expo:
@@ -245,7 +400,7 @@ def main(_):
 
 
             for k, v in eval_info.items():
-                wandb.log({f"evaluation/{k}": v}, step=i + FLAGS.pretrain_steps)
+                wandb.log({f"evaluation/{k}": v}, step=i + actual_pretrain_steps)
 
             if FLAGS.checkpoint_model:
                 try:
