@@ -373,38 +373,54 @@ def main(_):
                 wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i >= FLAGS.start_training:
+            # Check if buffer has enough data for sequence sampling
             if FLAGS.horizon > 1:
-                online_batch = replay_buffer.sample_sequence(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)),
-                    sequence_length=FLAGS.horizon,
-                    discount=FLAGS.config.discount
+                min_required_size = max(
+                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)) * FLAGS.horizon,
+                    FLAGS.horizon
                 )
             else:
-                online_batch = replay_buffer.sample(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
-                )
-            
-            if FLAGS.horizon > 1:
-                offline_batch = ds.sample_sequence(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
-                    sequence_length=FLAGS.horizon,
-                    discount=FLAGS.config.discount
-                )
+                min_required_size = int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
+
+            if replay_buffer._size >= min_required_size:
+                # Proceed with sampling and update
+                if FLAGS.horizon > 1:
+                    online_batch = replay_buffer.sample_sequence(
+                        int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)),
+                        sequence_length=FLAGS.horizon,
+                        discount=FLAGS.config.discount
+                    )
+                else:
+                    online_batch = replay_buffer.sample(
+                        int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
+                    )
+
+                if FLAGS.horizon > 1:
+                    offline_batch = ds.sample_sequence(
+                        int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
+                        sequence_length=FLAGS.horizon,
+                        discount=FLAGS.config.discount
+                    )
+                else:
+                    offline_batch = ds.sample(
+                        int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
+                    )
+
+                batch = combine(offline_batch, online_batch)
+
+                if FLAGS.horizon > 1:
+                     # Flatten actions: (B, T, D) -> (B, T*D)
+                     batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0], -1)
+                     # Take n-step reward and mask: (B, T) -> (B,)
+                     batch['rewards'] = batch['rewards'][:, -1]
+                     batch['masks'] = batch['masks'][:, -1]
+
+                agent, update_info = agent.update(batch, FLAGS.utd_ratio)
             else:
-                offline_batch = ds.sample(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio)
-                )
-
-            batch = combine(offline_batch, online_batch)
-            
-            if FLAGS.horizon > 1:
-                 # Flatten actions: (B, T, D) -> (B, T*D)
-                 batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0], -1)
-                 # Take n-step reward and mask: (B, T) -> (B,)
-                 batch['rewards'] = batch['rewards'][:, -1]
-                 batch['masks'] = batch['masks'][:, -1]
-
-            agent, update_info = agent.update(batch, FLAGS.utd_ratio)
+                # Skip update - buffer still filling up
+                if i % FLAGS.log_interval == 0:
+                    print(f"[Step {i}] Skipping update: buffer size {replay_buffer._size} < {min_required_size} required", flush=True)
+                update_info = {}  # Empty update info to avoid errors below
 
             # Success buffer BC regularization
             if FLAGS.use_success_buffer and FLAGS.horizon > 1:

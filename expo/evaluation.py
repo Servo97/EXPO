@@ -129,7 +129,7 @@ class SamplerPolicy(object):
 
 
 
-def evaluate_robo(agent, env: gym.Env, num_episodes: int, max_traj_len: int, save_video: bool = False, return_trajs=False): 
+def evaluate_robo(agent, env: gym.Env, num_episodes: int, max_traj_len: int, save_video: bool = False, return_trajs=False):
     eval_sampler = QueueTrajSampler(env, max_traj_len)
     sampler_policy = SamplerPolicy(agent)
     trajs = eval_sampler.sample(
@@ -137,9 +137,33 @@ def evaluate_robo(agent, env: gym.Env, num_episodes: int, max_traj_len: int, sav
                     num_episodes
                 )
 
+    # Collect task completion and success metrics from trajs
+    stats = defaultdict(list)
+    for traj in trajs:
+        if 'info' in traj:
+            # For each trajectory, get the last info dict (episode summary)
+            if isinstance(traj['info'], list) and len(traj['info']) > 0:
+                last_info = traj['info'][-1]
+                if 'tasks_completed' in last_info:
+                    stats['tasks_completed'].append(last_info['tasks_completed'])
+                if 'success' in last_info:
+                    stats['success'].append(last_info['success'])
+
+    # Build return dict
+    result = {
+        "return": np.mean([np.sum(t['rewards']) for t in trajs]),
+        "length": np.mean([len(t['rewards']) for t in trajs])
+    }
+
+    # Add kitchen-specific metrics if available
+    if 'tasks_completed' in stats:
+        result['tasks_completed'] = np.mean(stats['tasks_completed'])
+    if 'success' in stats:
+        result['success'] = np.mean(stats['success'])
+
     if return_trajs:
-        return trajs, {"return": np.mean([np.sum(t['rewards']) for t in trajs]), "length": np.mean([len(t['rewards']) for t in trajs])}
-    return {"return": np.mean([np.sum(t['rewards']) for t in trajs]), "length": np.mean([len(t['rewards']) for t in trajs])}
+        return trajs, result
+    return result
 
 
 
@@ -176,7 +200,8 @@ class TrajSamplerProc:
             rewards = []
             next_observations = []
             dones = []
-            
+            infos = []
+
             # Reset environment
             observation = env.reset()
             
@@ -233,7 +258,8 @@ class TrajSamplerProc:
                 rewards.append(reward)
                 dones.append(done)
                 next_observations.append(next_observation)
-                
+                infos.append(info)
+
                 # Update observation
                 observation = next_observation
                 
@@ -252,8 +278,9 @@ class TrajSamplerProc:
                 'rewards': np.array(rewards, dtype=np.float32),
                 'next_observations': np.array(next_observations, dtype=np.float32),
                 'dones': np.array(dones, dtype=np.float32),
+                'info': infos,  # Store list of info dicts
             }
-            
+
             trajs.append(traj)
         
         # Send all trajectories back to main process
