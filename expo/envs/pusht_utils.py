@@ -476,7 +476,8 @@ class PushTEnv(gymnasium.Env):
         self.goal_pose = np.array([256,256,np.pi/4])  # x, y, theta (in radians)
 
         # Add collision handling
-        self.space.on_collision(0, 0, post_solve=self._handle_collision)
+        handler = self.space.add_collision_handler(0, 0)
+        handler.post_solve = self._handle_collision
         self.n_contact_points = 0
 
         self.max_score = 50 * 100
@@ -692,38 +693,71 @@ class PushTNormalizationWrapper(gymnasium.Wrapper):
         self.action_space = gymnasium.spaces.Box(low=low, high=high, dtype=np.float32)
 
     def normalize(self, x):
+        x = np.array(x)
         return np.clip(2 * (x - self.min_val) / (self.max_val - self.min_val) - 1, -1.0, 1.0)
 
     def unnormalize(self, x):
+        x = np.array(x)
         return (x + 1) / 2 * (self.max_val - self.min_val) + self.min_val
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        return self.normalize(obs), info
+        # Return only observation for gym API compatibility (EXPO expects old gym API)
+        return self.normalize(obs)
 
     def step(self, action):
         action = self.unnormalize(action)
         obs, reward, terminated, truncated, info = self.env.step(action)
-        return self.normalize(obs), reward, terminated, truncated, info
+        # Combine terminated and truncated into done for gym API compatibility
+        done = terminated or truncated
+        return self.normalize(obs), reward, done, info
 
 def get_dataset(env_name):
     if env_name == 'pusht-keypoints-v0':
-        dataset_path = os.path.join(os.path.expanduser('~/.ogpo/datasets/pusht'), 'pusht', 'pusht_cchi_v7_replay.zarr')
-        if not os.path.exists(dataset_path):
+        # Check multiple possible locations for the dataset
+        possible_paths = [
+            os.path.join(os.path.expanduser('~/.ogpo/datasets/pusht'), 'pusht', 'pusht_cchi_v7_replay.zarr'),
+            '/home/mananaga/.ogpo/datasets/pusht/pusht/pusht_cchi_v7_replay.zarr',
+        ]
+        
+        dataset_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                dataset_path = path
+                print(f"Found existing dataset at {dataset_path}")
+                break
+        
+        if dataset_path is None:
+            # Use first path for download
+            dataset_path = possible_paths[0]
             print(f"Downloading PushT dataset to {dataset_path}...")
             # Create directory
-            os.makedirs(os.path.dirname(dataset_path), exist_ok=True)
-            # Download zip
-            url = "https://diffusion-policy.cs.columbia.edu/data/training/pusht_cchi_v7_replay.zarr.zip"
-            zip_path = dataset_path + ".zip"
-            import urllib.request
-            urllib.request.urlretrieve(url, zip_path)
+            parent_dir = os.path.dirname(os.path.dirname(dataset_path))
+            os.makedirs(parent_dir, exist_ok=True)
+            
+            # Download using the correct URL
+            url = "https://diffusion-policy.cs.columbia.edu/data/training/pusht.zip"
+            zip_path = os.path.join(parent_dir, "pusht.zip")
+            
+            try:
+                import urllib.request
+                print(f"Downloading from {url}...")
+                urllib.request.urlretrieve(url, zip_path)
+            except Exception as e:
+                print(f"Failed to download: {e}")
+                print("Please manually download the dataset from:")
+                print("https://diffusion-policy.cs.columbia.edu/data/training/pusht.zip")
+                print(f"and extract to: {parent_dir}")
+                raise RuntimeError("Dataset download failed. Please download manually.")
+            
             # Unzip
             import zipfile
+            print("Extracting dataset...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(os.path.dirname(os.path.dirname(dataset_path)))
+                zip_ref.extractall(parent_dir)
             # Remove zip
             os.remove(zip_path)
+            print(f"Dataset extracted to {parent_dir}")
 
         print(f"Loading dataset from {dataset_path}")
         import zarr

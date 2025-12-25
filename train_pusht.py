@@ -20,8 +20,8 @@ from ml_collections import config_flags
 
 import wandb
 from expo.agents import EXPOLearner
-from expo.data import ReplayBuffer
-from expo.evaluation import evaluate
+from expo.data import RoboReplayBuffer
+from expo.evaluation import evaluate_robo
 
 FLAGS = flags.FLAGS
 
@@ -41,7 +41,7 @@ flags.DEFINE_string("output_dir", "/data/user_data/mananaga/expo/logs", "Directo
 flags.DEFINE_integer("pretrain_steps", 500000, "Number of offline updates.")
 flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
 flags.DEFINE_boolean("save_video", False, "Save videos during evaluation.")
-flags.DEFINE_boolean("checkpoint_model", False, "Save agent checkpoint on evaluation.")
+flags.DEFINE_boolean("checkpoint_model", True, "Save agent checkpoint on evaluation.")
 flags.DEFINE_boolean("checkpoint_buffer", False, "Save agent replay buffer on evaluation.")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
 flags.DEFINE_integer("horizon", 4, "Action chunking horizon.")
@@ -239,7 +239,7 @@ def main(_):
         FLAGS.seed, example_observation, example_action, **kwargs
     )
 
-    replay_buffer = ReplayBuffer(
+    replay_buffer = RoboReplayBuffer(
         example_observation, example_action, FLAGS.max_steps
     )
     replay_buffer.seed(FLAGS.seed)
@@ -273,7 +273,7 @@ def main(_):
                 wandb.log({f"offline-training/{k}": v}, step=i)
 
         if i % FLAGS.offline_eval_interval == 0:
-            eval_info = evaluate(agent, eval_env, num_episodes=FLAGS.eval_episodes)
+            eval_info = evaluate_robo(agent, eval_env, max_traj_len=300, num_episodes=FLAGS.eval_episodes)
 
             for k, v in eval_info.items():
                 wandb.log({f"offline-evaluation/{k}": v}, step=i)
@@ -462,9 +462,10 @@ def main(_):
                     wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i % FLAGS.eval_interval == 0:
-            eval_info = evaluate(
+            eval_info = evaluate_robo(
                 agent,
                 eval_env,
+                max_traj_len=300,
                 num_episodes=FLAGS.eval_episodes,
                 save_video=FLAGS.save_video,
             )

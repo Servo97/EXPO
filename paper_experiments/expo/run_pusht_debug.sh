@@ -1,19 +1,9 @@
 #!/bin/bash
-#SBATCH --partition=general
-#SBATCH --job-name=expo_pusht
-#SBATCH --gres=gpu:1
-#SBATCH --constraint=VRAM_48GB
-#SBATCH --cpus-per-task=20
-#SBATCH --mem=40G
-#SBATCH --time=48:00:00
-#SBATCH --output=/home/mananaga/logs/%j/.out
-#SBATCH --error=/home/mananaga/logs/%j/.out
-mkdir -p logs
+# Debug script for Push-T training (run without SLURM)
+# Usage: bash run_pusht_debug.sh [--seed=0] [--other_param=value]
 
 echo "Working directory: $(pwd)"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Job submitted from: $SLURM_SUBMIT_DIR"
-echo "Running on node: $SLURMD_NODENAME"
+echo "Running on node: $(hostname)"
 
 # Set environment variables
 export CUDA_VISIBLE_DEVICES=0
@@ -32,7 +22,7 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false
 # Default parameters (can be overridden via command line arguments)
 # Using OGPO pusht hyperparameters where applicable
 seed=0
-run_name="expo_pusht_${seed}"
+run_name="expo_pusht_debug_${seed}"
 utd_ratio=1  # From OGPO: utd_warmup=1, utd_online=1
 start_training=5000  # From EXPO square default
 max_steps=2000000  # From OGPO: online_steps=2000000
