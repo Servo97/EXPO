@@ -282,7 +282,7 @@ def main(_):
             print(eval_info)
             print(f"Offline evaluation return: {eval_info.get('return', 0.0)}")
             
-            if FLAGS.clip_bc and eval_info.get("return", 0.0) >= 0.45:
+            if FLAGS.clip_bc and eval_info.get("success", 0.0) >= 0.45:
                 if FLAGS.checkpoint_model:
                     try:
                         checkpoints.save_checkpoint(
