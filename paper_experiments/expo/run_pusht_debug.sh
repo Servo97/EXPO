@@ -17,6 +17,7 @@ cd /home/mananaga/EXPO/
 export C_INCLUDE_PATH=$CONDA_PREFIX/include:$C_INCLUDE_PATH
 export LIBRARY_PATH=$CONDA_PREFIX/lib:$LIBRARY_PATH
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+export FLAX_USE_ORBAX_CHECKPOINTING=0
 XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 # Default parameters (can be overridden via command line arguments)
