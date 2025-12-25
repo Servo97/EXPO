@@ -151,11 +151,14 @@ def collect_expo_rollouts(agent, env, num_successes=50, seed=42, max_steps=300, 
     """
     Collect successful rollouts from EXPO agent.
     
+    IMPORTANT: All rollouts use the SAME starting state (determined by seed) to show
+    the distribution of trajectories from a fixed initial configuration.
+    
     Args:
         agent: EXPO agent
         env: Push-T environment
         num_successes: Number of successful rollouts to collect
-        seed: Random seed (used for agent's RNG only; env uses fixed seed from creation)
+        seed: Random seed for both environment state and agent's RNG
         max_steps: Maximum steps per episode
         agent_name: Name for logging
     
@@ -178,8 +181,9 @@ def collect_expo_rollouts(agent, env, num_successes=50, seed=42, max_steps=300, 
         
         total_attempts += 1
         
-        # Reset env (old Gym API - returns only observation)
-        obs = env.reset()
+        # Reset env to FIXED state using the seed (old Gym API - returns only observation)
+        # This ensures all rollouts start from the same initial T-block configuration
+        obs = env.reset(seed=seed)
         obs = np.array(obs)
         
         episode_obs = [obs]
@@ -340,8 +344,8 @@ def plot_expo_rollouts(expo_rollouts, env, viz_seed=42, output_path='pusht_expo_
     
     fig, ax = plt.subplots(1, 1, figsize=(8, 8), dpi=150)
     
-    # Get background image from initial state
-    obs = env.reset()
+    # Get background image from initial state (using same seed as rollouts)
+    obs = env.reset(seed=viz_seed)
     bg_img = env.render()  # Should be (512, 512, 3)
     
     def unnormalize_action(x):
@@ -436,7 +440,7 @@ def main(checkpoint_dir=None, checkpoint_step=None, use_cache=True, cache_path='
             # Still need to create env for plotting
             print(f"Creating environment {env_name} for plotting...", flush=True)
             env = make_env(env_name, seed=viz_seed)
-            env.reset()  # Initialize environment
+            env.reset(seed=viz_seed)  # Initialize environment to the fixed starting state
             
             # Plot and exit
             plot_expo_rollouts(expo_rollouts, env, viz_seed=viz_seed, output_path=output_path)
@@ -486,7 +490,7 @@ if __name__ == "__main__":
                         help='Do not use cached rollouts (regenerate from scratch)')
     parser.add_argument('--cache_path', type=str, default='expo_rollouts_data.npz',
                         help='Path to cache file (default: expo_rollouts_data.npz)')
-    parser.add_argument('--num_rollouts', type=int, default=50,
+    parser.add_argument('--num_rollouts', type=int, default=10,
                         help='Number of successful rollouts to collect (default: 50)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for environment (default: 42)')
