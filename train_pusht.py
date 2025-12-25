@@ -282,15 +282,18 @@ def main(_):
             print(eval_info)
             print(f"Offline evaluation return: {eval_info.get('return', 0.0)}")
             
+            # Save checkpoint at every evaluation
+            if FLAGS.checkpoint_model:
+                try:
+                    checkpoints.save_checkpoint(
+                        chkpt_dir, agent, step=i, keep=20, overwrite=True, orbax_checkpointer=False
+                    )
+                    print(f"Saved checkpoint at step {i}")
+                except Exception as e:
+                    print(f"Could not save model checkpoint: {e}")
+            
+            # Check for early stopping via BC clipping
             if FLAGS.clip_bc and eval_info.get("success", 0.0) >= 0.45:
-                if FLAGS.checkpoint_model:
-                    try:
-                        checkpoints.save_checkpoint(
-                            chkpt_dir, agent, step=i, keep=20, overwrite=True
-                        )
-                    except Exception as e:
-                        print(f"Could not save model checkpoint during BC clipping: {e}")
-
                 print("breaking due to bc clipping (offline pretraining)")
                 actual_pretrain_steps = i + 1
                 break
@@ -476,10 +479,11 @@ def main(_):
             if FLAGS.checkpoint_model:
                 try:
                     checkpoints.save_checkpoint(
-                        chkpt_dir, agent, step=i, keep=20, overwrite=True
+                        chkpt_dir, agent, step=i + actual_pretrain_steps, keep=20, overwrite=True, orbax_checkpointer=False
                     )
-                except:
-                    print("Could not save model checkpoint.")
+                    print(f"Saved checkpoint at step {i + actual_pretrain_steps}")
+                except Exception as e:
+                    print(f"Could not save model checkpoint: {e}")
 
             if FLAGS.checkpoint_buffer:
                 try:
