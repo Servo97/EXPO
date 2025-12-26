@@ -484,13 +484,13 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint_dir', type=str, 
                         default='/data/user_data/mananaga/expo/logs/s0_500000pretrain_LN/checkpoints',
                         help='Directory containing EXPO checkpoints (default: logs/s0_500000pretrain_LN/checkpoints)')
-    parser.add_argument('--checkpoint_step', type=int, default=40000,
+    parser.add_argument('--checkpoint_step', type=int, default=2060001,
                         help='Specific checkpoint step to load (default: 40000, the latest available)')
     parser.add_argument('--no_cache', action='store_true',
                         help='Do not use cached rollouts (regenerate from scratch)')
     parser.add_argument('--cache_path', type=str, default='expo_rollouts_data.npz',
                         help='Path to cache file (default: expo_rollouts_data.npz)')
-    parser.add_argument('--num_rollouts', type=int, default=10,
+    parser.add_argument('--num_rollouts', type=int, default=50,
                         help='Number of successful rollouts to collect (default: 50)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for environment (default: 42)')
