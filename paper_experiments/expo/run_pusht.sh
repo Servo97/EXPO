@@ -16,19 +16,38 @@ echo "Job submitted from: $SLURM_SUBMIT_DIR"
 echo "Running on node: $SLURMD_NODENAME"
 
 # Set environment variables
-export CUDA_VISIBLE_DEVICES=0
+# Note: CUDA_VISIBLE_DEVICES is managed by SLURM via --gres=gpu:1
+# Do not override it manually, or it may point to an unallocated GPU
 export MUJOCO_GL=egl
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export PYTHONWARNINGS="ignore::DeprecationWarning"
 
-source ~/miniconda/etc/profile.d/conda.sh && conda activate expo
+source ~/miniconda/etc/profile.d/conda.sh
+conda activate expo
+
 cd /home/mananaga/EXPO/
 
+# Ensure conda libraries are in the path, but system CUDA takes priority
 export C_INCLUDE_PATH=$CONDA_PREFIX/include:$C_INCLUDE_PATH
 export LIBRARY_PATH=$CONDA_PREFIX/lib:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+# Put system CUDA paths at the FRONT of LD_LIBRARY_PATH for GPU access
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/nvidia:/usr/lib64/nvidia:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 export FLAX_USE_ORBAX_CHECKPOINTING=0
-XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+# Point JAX to system CUDA installation (conda env doesn't have CUDA libs)
+# Check for CUDA in common locations
+if [ -d "/usr/local/cuda" ]; then
+    export XLA_FLAGS="--xla_gpu_cuda_data_dir=/usr/local/cuda"
+    echo "Using CUDA from: /usr/local/cuda"
+elif [ -d "/usr/local/cuda-11" ]; then
+    export XLA_FLAGS="--xla_gpu_cuda_data_dir=/usr/local/cuda-11"
+    echo "Using CUDA from: /usr/local/cuda-11"
+elif [ -d "/usr/local/cuda-12" ]; then
+    export XLA_FLAGS="--xla_gpu_cuda_data_dir=/usr/local/cuda-12"
+    echo "Using CUDA from: /usr/local/cuda-12"
+else
+    echo "WARNING: Could not find system CUDA installation"
+fi
 
 # Default parameters (can be overridden via command line arguments)
 # Using OGPO pusht hyperparameters where applicable
@@ -63,8 +82,25 @@ for arg in "$@"; do
 done
 
 echo "Starting EXPO Push-T training job on $(hostname) at $(date)"
-echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
-echo "Using GPU: $(nvidia-smi -L)"
+echo "SLURM allocated GPUs: $CUDA_VISIBLE_DEVICES"
+echo ""
+echo "GPU Status:"
+nvidia-smi -L
+nvidia-smi -q -d COMPUTE | grep -A 2 "Compute Mode" || echo "Could not query compute mode"
+echo ""
+echo "CUDA Environment:"
+echo "  CONDA_PREFIX: $CONDA_PREFIX"
+echo "  LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+echo "  XLA_FLAGS: $XLA_FLAGS"
+which nvcc || echo "nvcc not found in PATH"
+echo ""
+echo "Checking CUDA libraries in conda env:"
+ls -la $CONDA_PREFIX/lib/libcuda* 2>/dev/null || echo "No libcuda* in $CONDA_PREFIX/lib"
+ls -la $CONDA_PREFIX/lib/libcudart* 2>/dev/null || echo "No libcudart* in $CONDA_PREFIX/lib"
+echo ""
+echo "Python/JAX CUDA test:"
+python -c "import jax; print(f'JAX version: {jax.__version__}'); print(f'JAX devices: {jax.devices()}'); print(f'JAX local devices: {jax.local_devices()}')" 2>&1
+echo ""
 echo "Seed: $seed"
 echo "Run name: $run_name"
 
