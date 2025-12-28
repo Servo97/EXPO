@@ -1,0 +1,78 @@
+#!/bin/bash
+# Debug script for Adroit Hammer training (run without SLURM)
+# Usage: bash adroit-hammer_debug.sh [--seed=0] [--other_param=value]
+
+echo "Working directory: $(pwd)"
+echo "Running on node: $(hostname)"
+
+# Set environment variables
+export CUDA_VISIBLE_DEVICES=0
+export PYTHONWARNINGS="ignore::DeprecationWarning"
+
+# Activate conda environment (all other env vars set automatically via activation script)
+source ~/miniconda/etc/profile.d/conda.sh && conda activate expo-adroit
+cd /home/mananaga/EXPO/
+
+# Optional: Disable Orbax checkpointing if needed
+# export FLAX_USE_ORBAX_CHECKPOINTING=0
+
+# Default parameters (can be overridden via command line arguments)
+seed=0
+run_name="expo_hammer_debug_${seed}"
+utd_ratio=20
+start_training=5000
+max_steps=2000000
+expo=True
+project_name="EXPO_paper"
+
+# Parse command line arguments to override defaults
+for arg in "$@"; do
+  case $arg in
+    --*=*)
+      key="${arg%%=*}"      # part before '='
+      value="${arg#*=}"     # part after '='
+      key="${key#--}"       # strip leading '--'
+      eval "$key=\"$value\"" # set variable dynamically
+      ;;
+    *)
+      echo "Unknown argument: $arg"
+      ;;
+  esac
+done
+
+echo "Starting EXPO Adroit Hammer training job on $(hostname) at $(date)"
+echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
+echo "Using GPU: $(nvidia-smi -L)"
+echo "Seed: $seed"
+echo "Run name: $run_name"
+
+# Run the training
+echo "Running training with parameters:"
+echo "  env_name: hammer-binary-v0"
+echo "  seed: $seed"
+echo "  run_name: $run_name"
+echo "  utd_ratio: $utd_ratio"
+echo "  start_training: $start_training"
+echo "  max_steps: $max_steps"
+echo "  expo: $expo"
+echo "  project_name: $project_name"
+
+python train_finetuning.py \
+    --env_name=hammer-binary-v0 \
+    --seed=$seed \
+    --run_name=$run_name \
+    --utd_ratio=$utd_ratio \
+    --start_training=$start_training \
+    --max_steps=$max_steps \
+    --expo=$expo \
+    --config=configs/expo_config.py \
+    --config.backup_entropy=False \
+    --config.hidden_dims="(512, 512, 512, 512)" \
+    --config.num_min_qs=1 \
+    --config.N=8 \
+    --config.n_edit_samples=8 \
+    --config.edit_action_scale=0.05 \
+    --project_name=$project_name
+
+echo "Job completed at $(date)"
+
