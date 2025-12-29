@@ -214,8 +214,9 @@ def main(_):
                 wandb.log({f"evaluation/{k}": v}, step=i)
             # wandb.log({}, commit=True)  # Force flush
             print(eval_info)
-            print(f"Offline evaluation success rate: {eval_info.get('return', 0.0)}")
-            if FLAGS.clip_bc and eval_info.get("return", 0.0) >= 0.45:
+            if 'success' in eval_info:
+                print(f"Offline evaluation success rate: {eval_info['success']:.4f}")
+            if FLAGS.clip_bc and eval_info.get("success", 0.0) >= 0.45:
                 if FLAGS.checkpoint_model:
                     try:
                         checkpoints.save_checkpoint(
@@ -236,7 +237,7 @@ def main(_):
     observation, done = env.reset(), False
     log_returns = 0
     action_queue = []
-    action_dim = example_action.shape[-1]
+    action_dim = env.action_space.shape[0] if hasattr(env.action_space, 'shape') else len(env.action_space.low)
     trajectory_buffer = []
 
     # Print configuration

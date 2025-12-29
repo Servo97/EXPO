@@ -26,12 +26,27 @@ def evaluate(
         env = WANDBVideo(env, name="eval_video", max_videos=1)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=num_episodes)
 
+    success_count = 0
     for i in range(num_episodes):
         observation, done = env.reset(), False
         while not done:
             action = agent.eval_actions(observation)
-            observation, _, done, _ = env.step(action)
-    return {"return": np.mean(env.return_queue), "length": np.mean(env.length_queue)}
+            observation, _, done, info = env.step(action)
+        
+        # Track success for Adroit environments
+        if done and 'goal_achieved' in info:
+            success_count += int(info['goal_achieved'])
+    
+    eval_stats = {
+        "return": np.mean(env.return_queue), 
+        "length": np.mean(env.length_queue)
+    }
+    
+    # Add success rate if applicable (Adroit environments)
+    if success_count > 0 or num_episodes > 0:
+        eval_stats["success"] = success_count / num_episodes
+    
+    return eval_stats
 
 
 def evaluate_diffusion(
@@ -41,6 +56,7 @@ def evaluate_diffusion(
         env = WANDBVideo(env, name="eval_video", max_videos=1)
     env = gym.wrappers.RecordEpisodeStatistics(env, deque_size=num_episodes)
 
+    success_count = 0
     for i in range(num_episodes):
         observation, done = env.reset(), False
         action_queue = []
@@ -59,8 +75,22 @@ def evaluate_diffusion(
                     action_queue.append(action)
             
             action = action_queue.pop(0)
-            observation, _, done, _ = env.step(action)
-    return {"return": np.mean(env.return_queue), "length": np.mean(env.length_queue)}, agent
+            observation, _, done, info = env.step(action)
+        
+        # Track success for Adroit environments
+        if done and 'goal_achieved' in info:
+            success_count += int(info['goal_achieved'])
+    
+    eval_stats = {
+        "return": np.mean(env.return_queue), 
+        "length": np.mean(env.length_queue)
+    }
+    
+    # Add success rate if applicable (Adroit environments)
+    if success_count > 0 or num_episodes > 0:
+        eval_stats["success"] = success_count / num_episodes
+    
+    return eval_stats, agent
 
 
 def evaluate_diffusion_steps(
