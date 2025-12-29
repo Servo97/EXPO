@@ -1,5 +1,5 @@
 #!/bin/bash
-# Debug script for Adroit Hammer training (run without SLURM)
+# Debug script for Adroit Pen training (run without SLURM)
 # Usage: bash adroit-hammer_debug.sh [--seed=0] [--other_param=value]
 
 echo "Working directory: $(pwd)"
@@ -18,7 +18,7 @@ cd /home/mananaga/EXPO/
 
 # Default parameters (can be overridden via command line arguments)
 seed=0
-run_name="expo_hammer_debug_${seed}"
+run_name="expo_pen_debug_${seed}"
 utd_ratio=20
 start_training=5000
 max_steps=2000000
@@ -40,7 +40,7 @@ for arg in "$@"; do
   esac
 done
 
-echo "Starting EXPO Adroit Hammer training job on $(hostname) at $(date)"
+echo "Starting EXPO Adroit Pen training job on $(hostname) at $(date)"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "Using GPU: $(nvidia-smi -L)"
 echo "Seed: $seed"
@@ -48,7 +48,7 @@ echo "Run name: $run_name"
 
 # Run the training
 echo "Running training with parameters:"
-echo "  env_name: hammer-binary-v0"
+echo "  env_name: pen-binary-v0"
 echo "  seed: $seed"
 echo "  run_name: $run_name"
 echo "  utd_ratio: $utd_ratio"
@@ -58,7 +58,7 @@ echo "  expo: $expo"
 echo "  project_name: $project_name"
 
 python train_finetuning.py \
-    --env_name=hammer-binary-v0 \
+    --env_name=pen-binary-v0 \
     --seed=$seed \
     --run_name=$run_name \
     --utd_ratio=$utd_ratio \

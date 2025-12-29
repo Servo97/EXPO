@@ -206,7 +206,7 @@ def main(_):
                 eval_info = evaluate(agent, eval_env, num_episodes=FLAGS.eval_episodes)
             
             else:
-                eval_info, agent = evaluate_diffusion(agent, eval_env, num_episodes=FLAGS.eval_episodes)
+                eval_info, agent = evaluate_diffusion(agent, eval_env, num_episodes=FLAGS.eval_episodes, horizon=FLAGS.horizon)
 
 
             for k, v in eval_info.items():
@@ -396,6 +396,7 @@ def main(_):
                     eval_env,
                     num_episodes=FLAGS.eval_episodes,
                     save_video=FLAGS.save_video,
+                    horizon=FLAGS.horizon,
                 )
 
 

@@ -35,7 +35,7 @@ def evaluate(
 
 
 def evaluate_diffusion(
-    agent, env: gym.Env, num_episodes: int, save_video: bool = False
+    agent, env: gym.Env, num_episodes: int, save_video: bool = False, horizon: int = 1
 ) -> Dict[str, float]:
     if save_video:
         env = WANDBVideo(env, name="eval_video", max_videos=1)
@@ -43,14 +43,28 @@ def evaluate_diffusion(
 
     for i in range(num_episodes):
         observation, done = env.reset(), False
+        action_queue = []
+        action_dim = env.action_space.shape[0] if hasattr(env.action_space, 'shape') else len(env.action_space.low)
+        
         while not done:
-            action, agent = agent.eval_actions(observation)
+            if len(action_queue) == 0:
+                if horizon > 1:
+                    # Sample chunk of actions
+                    action_chunk, agent = agent.eval_actions(observation)
+                    action_chunk = np.array(action_chunk).reshape(-1, action_dim)
+                    for act in action_chunk:
+                        action_queue.append(act)
+                else:
+                    action, agent = agent.eval_actions(observation)
+                    action_queue.append(action)
+            
+            action = action_queue.pop(0)
             observation, _, done, _ = env.step(action)
     return {"return": np.mean(env.return_queue), "length": np.mean(env.length_queue)}, agent
 
 
 def evaluate_diffusion_steps(
-    agent, env: gym.Env, num_steps: int, save_video: bool = False, return_trajs=False,
+    agent, env: gym.Env, num_steps: int, save_video: bool = False, return_trajs=False, horizon: int = 1,
 ) -> Dict[str, float]:
     if save_video:
         env = WANDBVideo(env, name="eval_video", max_videos=1)
@@ -59,7 +73,7 @@ def evaluate_diffusion_steps(
     all_trajs = []
 
     steps = 0
-
+    action_dim = env.action_space.shape[0] if hasattr(env.action_space, 'shape') else len(env.action_space.low)
 
     while steps < num_steps:
         observation, done = env.reset(), False
@@ -68,9 +82,21 @@ def evaluate_diffusion_steps(
         next_observations = []
         actions = []
         rewards = []
+        action_queue = []
 
         while not done and steps < num_steps:
-            action, agent = agent.eval_actions(observation)
+            if len(action_queue) == 0:
+                if horizon > 1:
+                    # Sample chunk of actions
+                    action_chunk, agent = agent.eval_actions(observation)
+                    action_chunk = np.array(action_chunk).reshape(-1, action_dim)
+                    for act in action_chunk:
+                        action_queue.append(act)
+                else:
+                    action, agent = agent.eval_actions(observation)
+                    action_queue.append(action)
+            
+            action = action_queue.pop(0)
             next_observation, r, done, _ = env.step(action)
 
             
