@@ -288,18 +288,9 @@ def main(_):
         observation = next_observation
 
         if done:
-            # Mark all transitions in trajectory with success
-            is_success = float(info.get('success', 0.0))
-            score = is_success if is_success != 0 else 1e-9
+            # Insert transitions into replay buffer
             for traj_transition in trajectory_buffer:
-                traj_transition['is_success'] = is_success
-                traj_transition['score'] = score
                 replay_buffer.insert(traj_transition)
-            
-            # Print success buffer status every successful episode
-            if is_success > 0:
-                num_successful = replay_buffer._traj_success_mask[:replay_buffer._size].sum()
-                print(f"[Step {i}] SUCCESS! Total successful transitions in buffer: {num_successful}/{replay_buffer._size}", flush=True)
             
             trajectory_buffer = []
             observation, done = env.reset(), False
@@ -343,39 +334,39 @@ def main(_):
 
             agent, update_info = agent.update(batch, FLAGS.utd_ratio)
 
-            # Success buffer BC regularization
-            if FLAGS.use_success_buffer and FLAGS.horizon > 1:
-                num_successful = replay_buffer._traj_success_mask[:replay_buffer._size].sum()
-                min_required = FLAGS.success_buffer_batch_size * FLAGS.horizon
-                
-                if i % FLAGS.log_interval == 0:
-                    print(f"[Step {i}] Success buffer check: {num_successful} successful / {min_required} required", flush=True)
-                
-                if num_successful >= min_required:
-                    try:
-                        success_batch = create_success_buffer_batch(
-                            replay_buffer,
-                            FLAGS.success_buffer_batch_size,
-                            FLAGS.horizon,
-                            FLAGS.config.discount
-                        )
-                        # Flatten actions for BC
-                        success_batch_flat = dict(success_batch)
-                        success_batch_flat['actions'] = success_batch['actions'].reshape(
-                            success_batch['actions'].shape[0], -1
-                        )
-                        success_batch_flat['observations'] = success_batch['observations']
-                        
-                        agent, bc_info = agent.update_actor_bc(success_batch_flat)
-                        update_info.update({f"success_bc/{k}": v for k, v in bc_info.items()})
-                        
-                        if i % FLAGS.log_interval == 0:
-                            print(f"[Step {i}] ✓ Applied success buffer BC update, loss: {bc_info.get('bc_loss', 'N/A'):.4f}", flush=True)
-                    except ValueError as e:
-                        # Not enough successful trajectories yet
-                        if i % FLAGS.log_interval == 0:
-                            print(f"[Step {i}] ✗ Failed to sample from success buffer: {e}", flush=True)
-                        pass
+            # Success buffer BC regularization (disabled - requires is_success/score keys in buffer)
+            # if FLAGS.use_success_buffer and FLAGS.horizon > 1:
+            #     num_successful = replay_buffer._traj_success_mask[:replay_buffer._size].sum()
+            #     min_required = FLAGS.success_buffer_batch_size * FLAGS.horizon
+            #     
+            #     if i % FLAGS.log_interval == 0:
+            #         print(f"[Step {i}] Success buffer check: {num_successful} successful / {min_required} required", flush=True)
+            #     
+            #     if num_successful >= min_required:
+            #         try:
+            #             success_batch = create_success_buffer_batch(
+            #                 replay_buffer,
+            #                 FLAGS.success_buffer_batch_size,
+            #                 FLAGS.horizon,
+            #                 FLAGS.config.discount
+            #             )
+            #             # Flatten actions for BC
+            #             success_batch_flat = dict(success_batch)
+            #             success_batch_flat['actions'] = success_batch['actions'].reshape(
+            #                 success_batch['actions'].shape[0], -1
+            #             )
+            #             success_batch_flat['observations'] = success_batch['observations']
+            #             
+            #             agent, bc_info = agent.update_actor_bc(success_batch_flat)
+            #             update_info.update({f"success_bc/{k}": v for k, v in bc_info.items()})
+            #             
+            #             if i % FLAGS.log_interval == 0:
+            #                 print(f"[Step {i}] ✓ Applied success buffer BC update, loss: {bc_info.get('bc_loss', 'N/A'):.4f}", flush=True)
+            #         except ValueError as e:
+            #             # Not enough successful trajectories yet
+            #             if i % FLAGS.log_interval == 0:
+            #                 print(f"[Step {i}] ✗ Failed to sample from success buffer: {e}", flush=True)
+            #             pass
 
             if i % FLAGS.log_interval == 0:
                 for k, v in update_info.items():
