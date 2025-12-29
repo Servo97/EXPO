@@ -1,9 +1,19 @@
 #!/bin/bash
-# Debug script for Adroit Pen training (run without SLURM)
-# Usage: bash adroit-hammer_debug.sh [--seed=0] [--other_param=value]
+#SBATCH --partition=general
+#SBATCH --job-name=ogpo_training
+#SBATCH --gres=gpu:1
+#SBATCH --constraint=VRAM_48GB
+#SBATCH --cpus-per-task=20
+#SBATCH --mem=40G
+#SBATCH --time=48:00:00
+#SBATCH --output=/home/mananaga/logs/%j/.out
+#SBATCH --error=/home/mananaga/logs/%j/.out
+mkdir -p logs
 
 echo "Working directory: $(pwd)"
-echo "Running on node: $(hostname)"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Job submitted from: $SLURM_SUBMIT_DIR"
+echo "Running on node: $SLURMD_NODENAME"
 
 # Set environment variables
 export CUDA_VISIBLE_DEVICES=0
@@ -19,7 +29,7 @@ cd /home/mananaga/EXPO/
 # Default parameters (can be overridden via command line arguments)
 seed=0
 run_name="expo_pen_debug_${seed}"
-utd_ratio=20
+utd_ratio=1
 start_training=5000
 max_steps=2000000
 expo=True
