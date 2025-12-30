@@ -20,7 +20,7 @@ cd /home/mananaga/EXPO/
 seed=0
 run_name="expo_pen_debug_${seed}"
 utd_ratio=20
-start_training=5000
+start_training=0
 max_steps=2000000
 expo=True
 project_name="EXPO_paper"
@@ -67,11 +67,11 @@ python train_finetuning.py \
     --expo=$expo \
     --config=configs/expo_config.py \
     --config.backup_entropy=False \
-    --config.hidden_dims="(512, 512, 512, 512)" \
-    --config.num_min_qs=1 \
+    --config.hidden_dims="(256, 256, 256)" \
     --config.N=8 \
     --config.n_edit_samples=8 \
-    --config.edit_action_scale=0.05 \
+    --config.edit_action_scale=0.7 \
+    --config.actor_drop=0.1 \
     --project_name=$project_name
 
 echo "Job completed at $(date)"

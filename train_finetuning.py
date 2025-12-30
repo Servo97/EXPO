@@ -55,7 +55,7 @@ flags.DEFINE_integer(
     "start_training", int(1e4), "Number of training steps to start training."
 )
 flags.DEFINE_string("output_dir", "data/user_data/ssaxena2/expo/logs", "Directory for saving logs and checkpoints.")
-flags.DEFINE_integer("pretrain_steps", 1000000, "Number of offline updates.")
+flags.DEFINE_integer("pretrain_steps", 20000, "Number of offline updates.")
 flags.DEFINE_boolean("tqdm", True, "Use tqdm progress bar.")
 flags.DEFINE_boolean("save_video", False, "Save videos during evaluation.")
 flags.DEFINE_boolean("checkpoint_model", False, "Save agent checkpoint on evaluation.")
@@ -75,7 +75,7 @@ flags.DEFINE_boolean(
 flags.DEFINE_boolean(
     "pretrain_q", False, "Whether to pretrain Q-function."
 )
-flags.DEFINE_integer("horizon", 4, "Action chunking horizon.")
+flags.DEFINE_integer("horizon", 1, "Action chunking horizon.")
 
 config_flags.DEFINE_config_file(
     "config",

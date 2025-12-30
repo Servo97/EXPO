@@ -78,7 +78,6 @@ python train_finetuning.py \
     --config=configs/expo_config.py \
     --config.backup_entropy=False \
     --config.hidden_dims="(256, 256, 256)" \
-    --config.num_min_qs=1 \
     --config.N=8 \
     --config.n_edit_samples=8 \
     --config.edit_action_scale=0.7 \
