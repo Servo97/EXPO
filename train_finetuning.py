@@ -28,6 +28,7 @@ import wandb
 from expo.agents import EXPOLearner
 from expo.agents import SACLearner
 from expo.data import ReplayBuffer
+from expo.data import RoboReplayBuffer
 from expo.data.d4rl_datasets import D4RLDataset
 
 try:
@@ -159,6 +160,10 @@ def main(_):
     eval_env = wrap_gym(eval_env, rescale_actions=True)
     eval_env.seed(FLAGS.seed + 42)
 
+    # Get example observation and action for replay buffer initialization
+    example_observation = ds.dataset_dict['observations'][0]
+    example_action = ds.dataset_dict['actions'][0]
+
     kwargs = dict(FLAGS.config)
     model_cls = kwargs.pop("model_cls")
     kwargs["horizon"] = FLAGS.horizon
@@ -166,8 +171,8 @@ def main(_):
         FLAGS.seed, env.observation_space, env.action_space, **kwargs
     )
 
-    replay_buffer = ReplayBuffer(
-        env.observation_space, env.action_space, FLAGS.max_steps
+    replay_buffer = RoboReplayBuffer(
+        example_observation, example_action, FLAGS.max_steps
     )
     replay_buffer.seed(FLAGS.seed)
 
@@ -270,7 +275,7 @@ def main(_):
 
         next_observation, reward, done, info = env.step(action)
 
-        if not done or "TimeLimit.truncated" in info:
+        if not done:
             mask = 1.0
         else:
             mask = 0.0
@@ -291,14 +296,15 @@ def main(_):
             # Insert transitions into replay buffer
             for traj_transition in trajectory_buffer:
                 replay_buffer.insert(traj_transition)
-            
+
             trajectory_buffer = []
             observation, done = env.reset(), False
             action_queue = []
 
-            for k, v in info["episode"].items():
-                decode = {"r": "return", "l": "length"}
-                wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
+            if 'episode' in info:
+                for k, v in info["episode"].items():
+                    decode = {"r": "return", "l": "length"}
+                    wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i >= FLAGS.start_training:
             if FLAGS.horizon > 1:
