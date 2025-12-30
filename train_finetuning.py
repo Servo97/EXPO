@@ -307,17 +307,30 @@ def main(_):
                     wandb.log({f"training/{k}": v}, step=i + actual_pretrain_steps)
 
         if i >= FLAGS.start_training:
+            # Calculate required online batch size
+            online_batch_size = int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
+
+            # Check if replay buffer has enough data
+            # For sequence sampling: need at least (batch_size + horizon - 1) transitions
+            # to have batch_size valid starting positions
+            if FLAGS.horizon > 1:
+                min_required_size = online_batch_size + FLAGS.horizon - 1
+            else:
+                min_required_size = online_batch_size
+
+            if len(replay_buffer) < min_required_size:
+                # Skip training if not enough online data collected yet
+                continue
+
             if FLAGS.horizon > 1:
                 online_batch = replay_buffer.sample_sequence(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio)),
+                    online_batch_size,
                     sequence_length=FLAGS.horizon,
                     discount=FLAGS.config.discount
                 )
             else:
-                online_batch = replay_buffer.sample(
-                    int(FLAGS.batch_size * FLAGS.utd_ratio * (1 - FLAGS.offline_ratio))
-                )
-            
+                online_batch = replay_buffer.sample(online_batch_size)
+
             if FLAGS.horizon > 1:
                 offline_batch = ds.sample_sequence(
                     int(FLAGS.batch_size * FLAGS.utd_ratio * FLAGS.offline_ratio),
@@ -330,7 +343,7 @@ def main(_):
                 )
 
             batch = combine(offline_batch, online_batch)
-            
+
             if FLAGS.horizon > 1:
                  # Flatten actions: (B, T, D) -> (B, T*D)
                  batch['actions'] = batch['actions'].reshape(batch['actions'].shape[0], -1)
