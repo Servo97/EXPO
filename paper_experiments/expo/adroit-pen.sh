@@ -29,7 +29,7 @@ cd /home/mananaga/EXPO/
 # Default parameters (can be overridden via command line arguments)
 seed=0
 run_name="expo_pen_debug_${seed}"
-utd_ratio=1
+utd_ratio=20
 start_training=0
 max_steps=2000000
 expo=True
@@ -77,7 +77,7 @@ python train_finetuning.py \
     --expo=$expo \
     --config=configs/expo_config.py \
     --config.backup_entropy=False \
-    --config.hidden_dims="(512, 512, 512, 512)" \
+    --config.hidden_dims="(256, 256, 256)" \
     --config.num_min_qs=1 \
     --config.N=8 \
     --config.n_edit_samples=8 \
