@@ -54,6 +54,11 @@ def convert_minari_to_awac_expert_format(dataset_id, output_path, num_expert_tra
         dones = np.logical_or(episode.terminations, episode.truncations)
         terminals = dones.astype(np.float64)  # Shape: (num_steps,)
 
+        # Convert DENSE rewards to SPARSE/BINARY rewards (like AWAC format)
+        # SPARSE reward: -1 for all steps except potentially last step
+        # This matches the format in door2_sparse.npy where all rewards are -1
+        rewards = np.full(num_steps, -1.0, dtype=np.float64)
+
         # Convert to AWAC format: observations and next_observations as list of dicts
         obs_list = [{'state_observation': obs[t]} for t in range(num_steps)]
         next_obs_list = [{'state_observation': next_obs[t]} for t in range(num_steps)]
@@ -63,11 +68,15 @@ def convert_minari_to_awac_expert_format(dataset_id, output_path, num_expert_tra
         # We'll just duplicate the last reward
         rewards_with_extra = np.append(rewards, rewards[-1])
 
+        # Add both 'observation' and 'state_observation' keys to match original format
+        obs_list_full = [{'observation': obs[t], 'state_observation': obs[t]} for t in range(num_steps)]
+        next_obs_list_full = [{'observation': next_obs[t], 'state_observation': next_obs[t]} for t in range(num_steps)]
+
         trajectory = {
-            'observations': obs_list,
+            'observations': obs_list_full,
             'actions': actions_list,
             'rewards': rewards_with_extra,
-            'next_observations': next_obs_list,
+            'next_observations': next_obs_list_full,
             'terminals': terminals,
             'agent_infos': [],
             'env_infos': []
@@ -126,6 +135,10 @@ def convert_minari_to_awac_bc_format(dataset_id, output_path, num_bc_trajectorie
         # Get terminals
         dones = np.logical_or(episode.terminations, episode.truncations)
         terminals = dones.astype(bool)  # Shape: (num_steps,)
+
+        # Convert DENSE rewards to SPARSE/BINARY rewards (like AWAC format)
+        # SPARSE reward: -1 for all steps (matching door_bc_sparse4.npy format)
+        rewards = np.full(num_steps, -1.0, dtype=np.float64)
 
         # BC format: everything as numpy arrays with proper shapes
         trajectory = {
