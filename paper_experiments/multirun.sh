@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ALG_ARRAY=("expo")
-ENV_ARRAY=("square")
+ENV_ARRAY=("adroit-pen")
 NUM_SEEDS=5
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

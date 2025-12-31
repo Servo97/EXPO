@@ -19,7 +19,7 @@ cd /home/mananaga/EXPO/
 # Default parameters (can be overridden via command line arguments)
 seed=0
 run_name="expo_pen_debug_${seed}"
-utd_ratio=20
+utd_ratio=1
 start_training=0
 max_steps=2000000
 expo=True
@@ -72,6 +72,7 @@ python train_finetuning.py \
     --config.n_edit_samples=8 \
     --config.edit_action_scale=0.7 \
     --config.actor_drop=0.1 \
+    --eval_episodes=50 \
     --project_name=$project_name
 
 echo "Job completed at $(date)"
