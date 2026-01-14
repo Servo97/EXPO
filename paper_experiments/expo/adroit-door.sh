@@ -29,7 +29,7 @@ cd /home/mananaga/EXPO/
 # Default parameters (can be overridden via command line arguments)
 seed=$1
 run_name="expo_door_${seed}"
-utd_ratio=1
+utd_ratio=20
 start_training=0
 max_steps=2000000
 expo=True

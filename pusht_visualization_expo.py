@@ -339,8 +339,8 @@ def plot_expo_rollouts(expo_rollouts, env, viz_seed=42, output_path='pusht_expo_
         'lines.linewidth': 2.0,
     })
     
-    # Create custom gradient colormap for EXPO (blue-ish)
-    expo_cmap = create_gradient_colormap('3366CC', 'expo_gradient')
+    # Use inferno colormap for time progression (dark violet -> maroon -> red -> orange -> yellow)
+    time_cmap = plt.get_cmap('inferno')
     
     fig, ax = plt.subplots(1, 1, figsize=(8, 8), dpi=150)
     
@@ -388,9 +388,9 @@ def plot_expo_rollouts(expo_rollouts, env, viz_seed=42, output_path='pusht_expo_
         # Get number of timesteps for this trajectory
         T = len(executed_actions_unnorm)
         
-        # Create color array based on time progression
+        # Create color array based on time progression (0 = dark violet, T-1 = yellow)
         time_indices = np.arange(T)
-        colors = expo_cmap(time_indices / max(T - 1, 1))
+        colors = time_cmap(time_indices / max(T - 1, 1))  # Normalize to [0, 1]
         
         # Plot connecting lines with color gradient
         if T > 1:
