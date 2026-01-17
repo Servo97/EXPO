@@ -45,6 +45,7 @@ flags.DEFINE_boolean("checkpoint_model", True, "Save agent checkpoint on evaluat
 flags.DEFINE_boolean("checkpoint_buffer", False, "Save agent replay buffer on evaluation.")
 flags.DEFINE_integer("utd_ratio", 1, "Update to data ratio.")
 flags.DEFINE_integer("horizon", 4, "Action chunking horizon.")
+flags.DEFINE_string('rew_fn', 'sparse', "Push-T reward function type (sparse, sparse_slow, l1, l2)")
 
 config_flags.DEFINE_config_file(
     "config",
@@ -219,9 +220,9 @@ def main(_):
 
     # Create Push-T environment
     from expo.envs.pusht_utils import make_env
-    
-    env = make_env(FLAGS.env_name, seed=FLAGS.seed)
-    eval_env = make_env(FLAGS.env_name, seed=FLAGS.seed + 1000)
+
+    env = make_env(FLAGS.env_name, seed=FLAGS.seed, rew_fn=FLAGS.rew_fn)
+    eval_env = make_env(FLAGS.env_name, seed=FLAGS.seed + 1000, rew_fn=FLAGS.rew_fn)
     
     # Load dataset
     ds = PushTD4RLDataset(env_name=FLAGS.env_name)

@@ -247,12 +247,13 @@ class PushTEnv(gymnasium.Env):
     reward_range = (0., 1.)
 
     def __init__(self,
-            legacy=False, 
+            legacy=False,
             block_cog=None, damping=None,
             render_action=True,
             render_size=96,
             reset_to_state=None,
-            render_mode="rgb_array"
+            render_mode="rgb_array",
+            rew_fn='sparse'
         ):
         self.render_mode = render_mode
         self._seed = None
@@ -294,6 +295,9 @@ class PushTEnv(gymnasium.Env):
         self.render_buffer = None
         self.latest_action = None
         self.reset_to_state = reset_to_state
+        self.prev_action = None
+
+        self.rew_fn = rew_fn
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -320,6 +324,8 @@ class PushTEnv(gymnasium.Env):
         return observation, info
 
     def step(self, action):
+        if self.prev_action is None:
+            self.prev_action = action
         dt = 1.0 / self.sim_hz
         self.n_contact_points = 0
         n_steps = self.sim_hz // self.control_hz
@@ -342,7 +348,44 @@ class PushTEnv(gymnasium.Env):
         goal_area = goal_geom.area
         coverage = intersection_area / goal_area
         done = coverage > self.success_threshold
-        reward = 0.0 if done else -1.0
+
+        # Calculate reward based on rew_fn
+        if self.rew_fn == 'sparse':
+            reward = 0.0 if done else -1.0
+        elif self.rew_fn == 'sparse_slow':
+            reward = 0.0 if done else -1.0 * (1 + np.linalg.norm(action - self.prev_action)/200)
+            self.prev_action = action
+        elif self.rew_fn == 'l2':
+            # L2 distance between block pose and goal pose
+            block_pos = np.array(self.block.position)
+            goal_pos = self.goal_pose[:2]
+            pos_dist = np.linalg.norm(block_pos - goal_pos)
+
+            # Angle distance (handle wraparound)
+            block_angle = self.block.angle % (2 * np.pi)
+            goal_angle = self.goal_pose[2] % (2 * np.pi)
+            angle_diff = abs(block_angle - goal_angle)
+            angle_dist = min(angle_diff, 2 * np.pi - angle_diff)
+
+            # Combine position and angle distances (normalize angle to similar scale)
+            # Angle is weighted by a factor (e.g., 50 to match position scale)
+            reward = -(pos_dist + 50 * angle_dist)
+        elif self.rew_fn == 'l1':
+            # L1 distance between block pose and goal pose
+            block_pos = np.array(self.block.position)
+            goal_pos = self.goal_pose[:2]
+            pos_dist = np.sum(np.abs(block_pos - goal_pos))
+
+            # Angle distance (handle wraparound)
+            block_angle = self.block.angle % (2 * np.pi)
+            goal_angle = self.goal_pose[2] % (2 * np.pi)
+            angle_diff = abs(block_angle - goal_angle)
+            angle_dist = min(angle_diff, 2 * np.pi - angle_diff)
+
+            # Combine position and angle distances (normalize angle to similar scale)
+            reward = -(pos_dist + 50 * angle_dist)
+        else:
+            raise ValueError(f"Unknown reward function: {self.rew_fn}")
 
         terminated = bool(done)
         truncated = False # PushT usually doesn't have a time limit in the env itself, handled by wrapper
@@ -350,6 +393,7 @@ class PushTEnv(gymnasium.Env):
         observation = self._get_obs()
         info = self._get_info(coverage=coverage)
         info['success'] = 1.0 if done else 0.0
+        info['reward'] = float(reward)
 
         return observation, float(reward), terminated, truncated, info
 
@@ -527,24 +571,26 @@ class PushTEnv(gymnasium.Env):
 class PushTKeypointsEnv(PushTEnv):
     def __init__(self,
             legacy=False,
-            block_cog=None, 
+            block_cog=None,
             damping=None,
             render_size=96,
-            keypoint_visible_rate=1.0, 
+            keypoint_visible_rate=1.0,
             agent_keypoints=False,
             draw_keypoints=False,
             reset_to_state=None,
             render_action=True,
-            local_keypoint_map: Dict[str, np.ndarray]=None, 
+            rew_fn='sparse',
+            local_keypoint_map: Dict[str, np.ndarray]=None,
             color_map: Optional[Dict[str, np.ndarray]]=None,
             render_mode="rgb_array"
         ):
         super().__init__(
-            legacy=legacy, 
+            legacy=legacy,
             block_cog=block_cog,
             damping=damping,
             render_size=render_size,
             reset_to_state=reset_to_state,
+            rew_fn=rew_fn,
             render_action=render_action,
             render_mode=render_mode)
         ws = self.window_size
@@ -656,11 +702,11 @@ class PushTKeypointsEnv(PushTEnv):
 
 # --- Factory and Dataset ---
 
-def make_env(env_name, seed=None):
+def make_env(env_name, seed=None, rew_fn='sparse'):
     if env_name == 'pusht-keypoints-v0':
-        env = PushTKeypointsEnv(render_mode="rgb_array")
+        env = PushTKeypointsEnv(render_mode="rgb_array", rew_fn=rew_fn)
     elif env_name == 'pusht-v0':
-        env = PushTEnv(render_mode="rgb_array")
+        env = PushTEnv(render_mode="rgb_array", rew_fn=rew_fn)
     else:
         raise ValueError(f"Unknown env name: {env_name}")
 
