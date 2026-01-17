@@ -7,40 +7,53 @@ NOTE: This script uses the old Gym API (pre-0.26) where:
     - env.step() returns (obs, reward, done, info) (not obs, reward, terminated, truncated, info)
 
 USAGE EXAMPLES:
-    
-    # Use default checkpoint directory and settings (uses cache if available)
-    python pusht_visualization_expo.py
-    
-    # Specify custom checkpoint directory
-    python pusht_visualization_expo.py --checkpoint_dir /path/to/checkpoints
-    
+
+    # Visualize sparse reward policy (default)
+    python pusht_visualization_expo.py --rew_fn sparse
+
+    # Visualize sparse_slow reward policy
+    python pusht_visualization_expo.py --rew_fn sparse_slow
+
+    # Visualize L2 dense reward policy
+    python pusht_visualization_expo.py --rew_fn l2
+
     # Load specific checkpoint step
-    python pusht_visualization_expo.py --checkpoint_step 1000000
-    
+    python pusht_visualization_expo.py --rew_fn sparse --checkpoint_step 1000000
+
     # Force regenerate rollouts (ignore cache)
-    python pusht_visualization_expo.py --no_cache
-    
+    python pusht_visualization_expo.py --rew_fn sparse_slow --no_cache
+
     # Collect more rollouts for better statistics
-    python pusht_visualization_expo.py --num_rollouts 100
-    
+    python pusht_visualization_expo.py --rew_fn sparse --num_rollouts 100
+
     # Custom output file
-    python pusht_visualization_expo.py --output my_visualization.png
-    
+    python pusht_visualization_expo.py --rew_fn sparse --output my_visualization.png
+
+    # Specify custom checkpoint directory (overrides automatic path construction)
+    python pusht_visualization_expo.py --checkpoint_dir /path/to/checkpoints
+
     # Full example with all options
     python pusht_visualization_expo.py \
-        --checkpoint_dir /data/user_data/mananaga/expo/logs/s42_500000pretrain_LN/checkpoints \
+        --rew_fn sparse_slow \
+        --train_seed 1 \
         --checkpoint_step 500000 \
         --num_rollouts 50 \
         --seed 42 \
-        --output expo_500k.png
+        --output expo_sparse_slow_seed1.png
 
 DEFAULT VALUES:
-    checkpoint_dir: /data/user_data/mananaga/expo/logs/s0_500000pretrain_LN/checkpoints
-    checkpoint_step: 40000 (latest available)
-    cache_path: expo_rollouts_data.npz
+    rew_fn: sparse
+    checkpoint_dir: Auto-constructed from rew_fn and train_seed
+      - sparse: /data/user_data/mananaga/expo/logs_sparse/s0_500000pretrain_LN/checkpoints
+      - sparse_slow: /data/user_data/mananaga/expo/logs_sparse_slow/s0_500000pretrain_LN/checkpoints
+      - l1: /data/user_data/mananaga/expo/logs_l1/s0_500000pretrain_LN/checkpoints
+      - l2: /data/user_data/mananaga/expo/logs_l2/s0_500000pretrain_LN/checkpoints
+    checkpoint_step: None (loads latest available)
+    train_seed: 0
+    cache_path: expo_rollouts_{rew_fn}.npz
     num_rollouts: 50
     seed: 42
-    output: pusht_expo_visualization.png
+    output: pusht_expo_{rew_fn}_visualization.png
 """
 
 import os
@@ -65,6 +78,42 @@ try:
 except ImportError:
     print("Warning: Could not import flax.training.checkpoints")
     checkpoints = None
+
+
+def get_checkpoint_dir(rew_fn='sparse', seed=0, pretrain_steps=500000, layer_norm=True):
+    """
+    Construct checkpoint directory path based on reward function and training parameters.
+
+    Args:
+        rew_fn: Reward function type ('sparse', 'sparse_slow', 'l1', 'l2')
+        seed: Random seed used in training
+        pretrain_steps: Number of pretraining steps
+        layer_norm: Whether layer norm was used in critic
+
+    Returns:
+        str: Full path to checkpoint directory
+    """
+    # Base directory depends on reward function
+    if rew_fn == 'sparse':
+        base_dir = '/data/user_data/mananaga/expo/logs_sparse'
+    elif rew_fn == 'sparse_slow':
+        base_dir = '/data/user_data/mananaga/expo/logs_sparse_slow'
+    elif rew_fn == 'l1':
+        base_dir = '/data/user_data/mananaga/expo/logs_l1'
+    elif rew_fn == 'l2':
+        base_dir = '/data/user_data/mananaga/expo/logs_l2'
+    else:
+        raise ValueError(f"Unknown reward function: {rew_fn}. Must be one of: sparse, sparse_slow, l1, l2")
+
+    # Construct experiment prefix
+    exp_prefix = f"s{seed}_{pretrain_steps}pretrain"
+    if layer_norm:
+        exp_prefix += "_LN"
+
+    # Full checkpoint path
+    checkpoint_dir = os.path.join(base_dir, exp_prefix, "checkpoints")
+
+    return checkpoint_dir
 
 
 def load_expo_checkpoint(checkpoint_dir, step=None):
@@ -414,11 +463,11 @@ def plot_expo_rollouts(expo_rollouts, env, viz_seed=42, output_path='pusht_expo_
     plt.close()
 
 
-def main(checkpoint_dir=None, checkpoint_step=None, use_cache=True, cache_path='expo_rollouts_data.npz', 
-         num_rollouts=50, viz_seed=42, output_path='pusht_expo_visualization.png'):
+def main(checkpoint_dir=None, checkpoint_step=None, use_cache=True, cache_path='expo_rollouts_data.npz',
+         num_rollouts=50, viz_seed=42, output_path='pusht_expo_visualization.png', rew_fn='sparse'):
     """
     Main function to generate or load rollouts and create visualization.
-    
+
     Args:
         checkpoint_dir: Directory containing EXPO checkpoints
         checkpoint_step: Specific checkpoint step to load (None = latest)
@@ -427,81 +476,104 @@ def main(checkpoint_dir=None, checkpoint_step=None, use_cache=True, cache_path='
         num_rollouts: Number of successful rollouts to collect
         viz_seed: Seed for environment
         output_path: Where to save the visualization
+        rew_fn: Reward function type ('sparse', 'sparse_slow', 'l1', 'l2')
     """
-    
+
     env_name = 'pusht-keypoints-v0'
-    
+
     # Try to load from cache first
     if use_cache:
         cached_data = load_rollouts(cache_path)
         if cached_data is not None:
             expo_rollouts = cached_data
-            
+
             # Still need to create env for plotting
-            print(f"Creating environment {env_name} for plotting...", flush=True)
-            env = make_env(env_name, seed=viz_seed)
+            print(f"Creating environment {env_name} with rew_fn={rew_fn} for plotting...", flush=True)
+            env = make_env(env_name, seed=viz_seed, rew_fn=rew_fn)
             env.reset(seed=viz_seed)  # Initialize environment to the fixed starting state
-            
+
             # Plot and exit
             plot_expo_rollouts(expo_rollouts, env, viz_seed=viz_seed, output_path=output_path)
             return
-    
+
     # If not using cache or cache not found, generate rollouts
     if checkpoint_dir is None:
         raise ValueError("checkpoint_dir must be provided when generating new rollouts")
-    
+
     print("\n" + "="*80)
-    print("GENERATING NEW ROLLOUTS FOR EXPO")
+    print(f"GENERATING NEW ROLLOUTS FOR EXPO (rew_fn={rew_fn})")
     print("="*80 + "\n")
-    
+
     # Load EXPO agent
     print("Loading EXPO Agent...", flush=True)
     agent = load_expo_checkpoint(checkpoint_dir, step=checkpoint_step)
-    
+
     # Create env
-    print(f"Creating environment {env_name}...", flush=True)
-    env = make_env(env_name, seed=viz_seed)
-    
+    print(f"Creating environment {env_name} with rew_fn={rew_fn}...", flush=True)
+    env = make_env(env_name, seed=viz_seed, rew_fn=rew_fn)
+
     # Collect EXPO Rollouts
     expo_rollouts = collect_expo_rollouts(
-        agent, env, 
-        num_successes=num_rollouts, 
-        seed=viz_seed, 
+        agent, env,
+        num_successes=num_rollouts,
+        seed=viz_seed,
         agent_name="EXPO"
     )
-    
+
     # Save rollouts to cache for future use
     save_rollouts(expo_rollouts, save_path=cache_path)
-    
+
     # Plot
     plot_expo_rollouts(expo_rollouts, env, viz_seed=viz_seed, output_path=output_path)
 
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Visualize EXPO Push-T trajectories')
-    parser.add_argument('--checkpoint_dir', type=str, 
-                        default='/data/user_data/mananaga/expo/logs/s0_500000pretrain_LN/checkpoints',
-                        help='Directory containing EXPO checkpoints (default: logs/s0_500000pretrain_LN/checkpoints)')
-    parser.add_argument('--checkpoint_step', type=int, default=2060001,
-                        help='Specific checkpoint step to load (default: 40000, the latest available)')
+    parser.add_argument('--rew_fn', type=str, default='sparse',
+                        choices=['sparse', 'sparse_slow', 'l1', 'l2'],
+                        help='Reward function type (default: sparse)')
+    parser.add_argument('--checkpoint_dir', type=str, default=None,
+                        help='Directory containing EXPO checkpoints (if not provided, automatically determined from rew_fn)')
+    parser.add_argument('--checkpoint_step', type=int, default=None,
+                        help='Specific checkpoint step to load (default: None, loads latest available)')
+    parser.add_argument('--train_seed', type=int, default=0,
+                        help='Seed used during training (for constructing checkpoint path, default: 0)')
     parser.add_argument('--no_cache', action='store_true',
                         help='Do not use cached rollouts (regenerate from scratch)')
-    parser.add_argument('--cache_path', type=str, default='expo_rollouts_data.npz',
-                        help='Path to cache file (default: expo_rollouts_data.npz)')
+    parser.add_argument('--cache_path', type=str, default=None,
+                        help='Path to cache file (default: expo_rollouts_{rew_fn}.npz)')
     parser.add_argument('--num_rollouts', type=int, default=50,
                         help='Number of successful rollouts to collect (default: 50)')
     parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed for environment (default: 42)')
-    parser.add_argument('--output', type=str, default='pusht_expo_visualization.png',
-                        help='Output path for visualization (default: pusht_expo_visualization.png)')
-    
+                        help='Random seed for environment rollouts (default: 42)')
+    parser.add_argument('--output', type=str, default=None,
+                        help='Output path for visualization (default: pusht_expo_{rew_fn}_visualization.png)')
+
     args = parser.parse_args()
-    
+
+    # Construct checkpoint_dir if not provided
+    if args.checkpoint_dir is None:
+        args.checkpoint_dir = get_checkpoint_dir(
+            rew_fn=args.rew_fn,
+            seed=args.train_seed,
+            pretrain_steps=500000,
+            layer_norm=True
+        )
+        print(f"Using checkpoint directory: {args.checkpoint_dir}", flush=True)
+
+    # Construct cache_path if not provided
+    if args.cache_path is None:
+        args.cache_path = f'expo_rollouts_{args.rew_fn}.npz'
+
+    # Construct output path if not provided
+    if args.output is None:
+        args.output = f'pusht_expo_{args.rew_fn}_visualization.png'
+
     # By default use cache unless --no_cache is specified
     use_cache = not args.no_cache
-    
+
     main(
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_step=args.checkpoint_step,
@@ -509,6 +581,7 @@ if __name__ == "__main__":
         cache_path=args.cache_path,
         num_rollouts=args.num_rollouts,
         viz_seed=args.seed,
-        output_path=args.output
+        output_path=args.output,
+        rew_fn=args.rew_fn
     )
 
