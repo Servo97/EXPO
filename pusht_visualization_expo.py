@@ -531,7 +531,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description='Visualize EXPO Push-T trajectories')
-    parser.add_argument('--rew_fn', type=str, default='sparse',
+    parser.add_argument('--rew_fn', type=str, default='sparse_slow',
                         choices=['sparse', 'sparse_slow', 'l1', 'l2'],
                         help='Reward function type (default: sparse)')
     parser.add_argument('--checkpoint_dir', type=str, default=None,
