@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=general
+#SBATCH --partition=preempt
 #SBATCH --job-name=expo_pusht_sparse_slow
 #SBATCH --gres=gpu:1
 #SBATCH --constraint=VRAM_48GB
@@ -54,6 +54,7 @@ fi
 seed=0
 rew_fn="sparse_slow"
 run_name="expo_pusht_${rew_fn}_${seed}"
+output_dir="/data/user_data/mananaga/expo/logs_sparse_slow"
 utd_ratio=1  # From OGPO: utd_warmup=1, utd_online=1
 start_training=5000  # From EXPO square default
 max_steps=2000000  # From OGPO: online_steps=2000000
@@ -112,6 +113,7 @@ echo "  env_name: pusht-keypoints-v0"
 echo "  seed: $seed"
 echo "  rew_fn: $rew_fn"
 echo "  run_name: $run_name"
+echo "  output_dir: $output_dir"
 echo "  utd_ratio: $utd_ratio"
 echo "  start_training: $start_training"
 echo "  max_steps: $max_steps"
@@ -129,6 +131,7 @@ python train_pusht.py \
     --seed=$seed \
     --rew_fn=$rew_fn \
     --run_name=$run_name \
+    --output_dir=$output_dir \
     --utd_ratio=$utd_ratio \
     --start_training=$start_training \
     --max_steps=$max_steps \
