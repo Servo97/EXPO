@@ -1,0 +1,81 @@
+# SageMaker-compatible GPU runtime (CUDA 12.1, Ubuntu 22.04)
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---- System deps (runtime + build deps for a few native wheels) ----
+RUN apt-get update && apt-get install -y \
+    wget git ca-certificates \
+    libgl1-mesa-glx libglib2.0-0 \
+    sudo \
+    build-essential cmake pkg-config ninja-build \
+    libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---- Miniconda in /opt/conda (readable by non-root if you ever need it) ----
+ENV CONDA_DIR=/opt/conda
+ENV PATH="${CONDA_DIR}/bin:${PATH}"
+
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
+ && bash Miniconda3-latest-Linux-x86_64.sh -b -p ${CONDA_DIR} \
+ && rm -f Miniconda3-latest-Linux-x86_64.sh \
+ && conda clean -afy
+
+# ---- Create env ----
+RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
+ && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r \
+ && conda create -n ogpo python=3.12 pip -y \
+ && conda clean -afy
+
+ENV CONDA_DEFAULT_ENV=ogpo
+ENV PATH="${CONDA_DIR}/envs/ogpo/bin:${CONDA_DIR}/bin:${PATH}"
+
+# Sanity check: MUST show Python 3.12 and ogpo env paths
+RUN which python && python -V && which pip && pip -V
+
+# ---- Install python deps ----
+# (Optional but recommended for SageMaker script-mode conventions; safe to include)
+RUN pip install --no-cache-dir sagemaker-training
+
+# Your repo requirements
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# ---- Robomimic + Robosuite ----
+WORKDIR /opt
+RUN git clone https://github.com/ARISE-Initiative/robomimic.git
+WORKDIR /opt/robomimic
+RUN pip install --no-cache-dir egl-probe
+RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir robosuite
+
+# Pin/override versions if you need these hard constraints
+RUN pip install --no-cache-dir diffusers==0.35.2 huggingface-hub==0.36.0 transformers==4.57.1
+RUN pip install --no-cache-dir --upgrade wandb
+
+# IMPORTANT: your Python code checks ROBOMIMIC_DATASET_ROOT (not ROBOMIMIC_DATA_DIR),
+# so set BOTH to avoid surprises.
+RUN mkdir -p /root/.robomimic
+ENV ROBOMIMIC_DATASET_ROOT=/root/.robomimic
+ENV ROBOMIMIC_DATA_DIR=/root/.robomimic
+
+RUN wget -O ~/.robomimic/square/mh/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/square/mh/low_dim_v141.hdf5
+RUN wget -O ~/.robomimic/transport/mh/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/transport/mh/low_dim_v141.hdf5
+RUN wget -O ~/.robomimic/tool_hang/ph/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/tool_hang/ph/low_dim_v141.hdf5
+
+
+# ---- Copy YOUR repo into SageMaker code location ----
+# This is what removes the need for "-v $PWD:/app" on SageMaker.
+WORKDIR /opt/ml/code
+COPY . /opt/ml/code
+
+# Add SageMaker entry script
+COPY sagemaker/train.sh /opt/ml/code/sagemaker/train.sh
+RUN chmod +x /opt/ml/code/sagemaker/train.sh
+
+# Default envs (you can override at job submit time)
+ENV MUJOCO_GL=egl
+ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
+
+# SageMaker commonly expects something to run; make train.sh the default.
+ENTRYPOINT ["/bin/bash", "/opt/ml/code/sagemaker/train.sh"]
