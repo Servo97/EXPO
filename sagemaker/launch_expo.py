@@ -98,7 +98,7 @@ def get_image(user: str, profile: "default", region: "us-west-2") -> str:
 @dataclass(frozen=True)
 class Args:
     # Experiment selection
-    script: str = "expo_transport.sh"                 # scripts/expo/<script>
+    env: str = "transport"                           # environment: square, toolhang, or transport
     seed: str | None = None                          # default: timestamp
     expo_args: str = ""                              # appended to script call, e.g. "--use_success_buffer=True"
 
@@ -160,16 +160,17 @@ def main():
     role = args.arn
 
     base_job_name = sanitize_name(
-        f"{(args.name_prefix + '-') if args.name_prefix else ''}{args.user.replace('.', '-')}-{NAME}"
+        f"{(args.name_prefix + '-') if args.name_prefix else ''}{args.user.replace('.', '-')}-{NAME}-{args.env}"
     )
     job_name = get_job_name(base_job_name)
 
     seed = args.seed or datetime.now().strftime("%Y%m%d%H%M%S")
+    script = f"expo_{args.env}.sh"
 
     environment = {
         "SM_USE_RESERVED_CAPACITY": "1",
         # Your train.sh contract
-        "EXPO_SCRIPT": args.script,
+        "EXPO_SCRIPT": script,
         "SEED": seed,
         "EXPO_ARGS": args.expo_args,
         "USER": args.user,  # so /data/user_data/$USER/... looks sane
@@ -229,7 +230,7 @@ def main():
         share_identifier="default",
         timeout={"attemptDurationSeconds": args.max_run_days * 24 * 60 * 60},
     )
-    print(f"Queued {job_name} with script={args.script} seed={seed} expo_args='{args.expo_args}'")
+    print(f"Queued {job_name} with env={args.env} script={script} seed={seed} expo_args='{args.expo_args}'")
 
 if __name__ == "__main__":
     main()

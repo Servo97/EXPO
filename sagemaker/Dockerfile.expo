@@ -23,18 +23,15 @@ RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.s
 
 # ---- Create env ----
 RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
- && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r \
- && conda create -n ogpo python=3.12 pip -y \
- && conda clean -afy
+ && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
-ENV CONDA_DEFAULT_ENV=ogpo
-ENV PATH="${CONDA_DIR}/envs/ogpo/bin:${CONDA_DIR}/bin:${PATH}"
+COPY environment.yml /tmp/environment.yml
+RUN conda env create -f /tmp/environment.yml
+RUN conda install patchelf  # If you use conda.
 
-# Sanity check: MUST show Python 3.12 and ogpo env paths
-RUN which python && python -V && which pip && pip -V
+ENV CONDA_DEFAULT_ENV=expo
+ENV PATH="${CONDA_DIR}/envs/expo/bin:${CONDA_DIR}/bin:${PATH}"
 
-# ---- Install python deps ----
-# (Optional but recommended for SageMaker script-mode conventions; safe to include)
 RUN pip install --no-cache-dir sagemaker-training
 
 # Your repo requirements
@@ -43,25 +40,20 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # ---- Robomimic + Robosuite ----
 WORKDIR /opt
-RUN git clone https://github.com/ARISE-Initiative/robomimic.git
-WORKDIR /opt/robomimic
-RUN pip install --no-cache-dir egl-probe
+RUN git clone https://github.com/NVlabs/mimicgen.git
+WORKDIR /opt/mimicgen
 RUN pip install --no-cache-dir -e .
-RUN pip install --no-cache-dir robosuite
-
-# Pin/override versions if you need these hard constraints
-RUN pip install --no-cache-dir diffusers==0.35.2 huggingface-hub==0.36.0 transformers==4.57.1
 RUN pip install --no-cache-dir --upgrade wandb
 
-# IMPORTANT: your Python code checks ROBOMIMIC_DATASET_ROOT (not ROBOMIMIC_DATA_DIR),
-# so set BOTH to avoid surprises.
-RUN mkdir -p /root/.robomimic
-ENV ROBOMIMIC_DATASET_ROOT=/root/.robomimic
-ENV ROBOMIMIC_DATA_DIR=/root/.robomimic
+RUN mkdir -p /root/.robomimic/square
+RUN mkdir -p /root/.robomimic/transport
+RUN mkdir -p /root/.robomimic/tool_hang
 
 RUN wget -O ~/.robomimic/square/mh/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/square/mh/low_dim_v141.hdf5
 RUN wget -O ~/.robomimic/transport/mh/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/transport/mh/low_dim_v141.hdf5
 RUN wget -O ~/.robomimic/tool_hang/ph/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/tool_hang/ph/low_dim_v141.hdf5
+RUN wget -O ~/.robomimic/square/ph/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/square/ph/low_dim_v141.hdf5
+RUN wget -O ~/.robomimic/transport/ph/low_dim_v141.hdf5 http://downloads.cs.stanford.edu/downloads/rt_benchmark/transport/ph/low_dim_v141.hdf5
 
 
 # ---- Copy YOUR repo into SageMaker code location ----

@@ -5,7 +5,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 
 # Activate your conda environment (uncomment if needed)
 # source ~/miniconda3/etc/profile.d/conda.sh && conda activate /data/user_data/ssaxena2/tdmpc2-jax
-source ~/miniconda3/etc/profile.d/conda.sh && conda activate ogpo
+source ~/miniconda3/etc/profile.d/conda.sh && conda activate expo
 
 # Default parameters (can be overridden via command line arguments)
 seed=0
@@ -14,7 +14,7 @@ utd_ratio=20
 start_training=20000
 max_steps=2000000
 pretrain_steps=1000000
-dataset_dir="/root/.robomimic/square/mh"
+dataset_dir="/home/nagababa/.robomimic/square/mh/"
 project_name="EXPO_paper"
 horizon=4
 batch_size=256
@@ -71,6 +71,6 @@ python train_robo.py \
     --config.edit_action_scale=0.1 \
     --config.discount=0.99 \
     --project_name=$project_name \
-    --dataset_dir=$dataset_dir \
+    --dataset_dir=$dataset_dir
 
 echo "Job completed at $(date)"

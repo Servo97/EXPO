@@ -4,7 +4,7 @@ set -euo pipefail
 echo "Starting EXPO SageMaker train.sh on $(hostname) at $(date)"
 
 # ---- Defaults (override via SageMaker Estimator environment) ----
-: "${EXPO_SCRIPT:=ogpo_transport.sh}"     # e.g. ogpo_square.sh, ogpo_toolhang.sh, ...
+: "${EXPO_SCRIPT:=expo_transport.sh}"     # e.g. expo_square.sh, expo_toolhang.sh, ...
 : "${SEED:=$(date +%Y%m%d%H%M%S)}"       # timestamp seed
 : "${USER:=unknown_user}"                # your scripts use $USER for /data/user_data/$USER/...
 : "${CUDA_VISIBLE_DEVICES:=0}"
@@ -29,7 +29,7 @@ if [[ -z "${WANDB_API_KEY:-}" ]]; then
 fi
 
 REPO_ROOT="/opt/ml/code"
-EXPO_DIR="${REPO_ROOT}/scripts/ogpo"
+EXPO_DIR="${REPO_ROOT}/scripts/expo"
 SCRIPT_PATH="${EXPO_DIR}/${EXPO_SCRIPT}"
 
 if [[ ! -f "${SCRIPT_PATH}" ]]; then
@@ -40,7 +40,7 @@ if [[ ! -f "${SCRIPT_PATH}" ]]; then
 fi
 
 # Ensure dirs expected by your scripts exist
-mkdir -p "/data/user_data/${USER}/ogpo"
+mkdir -p "/data/user_data/${USER}/expo"
 chmod -R 777 "/data/user_data/${USER}" || true
 
 echo "Repo root: ${REPO_ROOT}"
@@ -53,9 +53,7 @@ nvidia-smi -L || true
 # Your scripts do: cd ../.. to reach repo root.
 cd "${EXPO_DIR}"
 
-# Many of your scripts use "--seeds" (plural). Keep consistent with your transport example.
-# If you truly have a script that expects "--seed", just pass it via EXPO_ARGS instead.
-SEED_ARG="--seeds=${SEED}"
+SEED_ARG="--seed=${SEED}"
 
 # shellcheck disable=SC2086
 exec /bin/bash "./${EXPO_SCRIPT}" ${SEED_ARG} ${EXPO_ARGS}

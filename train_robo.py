@@ -5,8 +5,6 @@ import pickle
 import glob
 import warnings
 
-# Suppress all deprecation warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 import d4rl
 import d4rl.gym_mujoco
@@ -18,10 +16,6 @@ import tqdm
 from absl import app, flags
 import jax
 
-try:
-    from flax.training import checkpoints
-except:
-    print("Not loading checkpointing functionality.")
 from ml_collections import config_flags
 
 import wandb
@@ -38,14 +32,20 @@ from expo.data.robomimic_datasets import (
     ENV_TO_HORIZON_MAP, MIMICGEN_ENV_TO_HORIZON_MAP, OBS_KEYS
 )
 import cloudpickle as pickle
+from expo.evaluation import evaluate, evaluate_diffusion, evaluate_robo
+from expo.wrappers import wrap_gym
 
+
+# Suppress all deprecation warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+try:
+    from flax.training import checkpoints
+except:
+    print("Not loading checkpointing functionality.")
 try:
     from expo.data.binary_datasets import BinaryDataset
 except:
     print("not importing binary dataset")
-from expo.evaluation import evaluate, evaluate_diffusion, evaluate_robo
-from expo.wrappers import wrap_gym
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("project_name", "EXPO_paper", "wandb project name.")
